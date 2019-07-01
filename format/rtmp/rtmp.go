@@ -20,6 +20,7 @@ import (
 	"time"
 )
 
+// Debug enables debug output
 var Debug bool
 
 func ParseURL(uri string) (u *url.URL, err error) {
@@ -1019,7 +1020,10 @@ func (self *Conn) writeAVTag(tag flvio.Tag, ts int32) (err error) {
 	if _, err = self.bufw.Write(b[:n]); err != nil {
 		return
 	}
-	_, err = self.bufw.Write(data)
+	if _, err = self.bufw.Write(data); err != nil {
+		return
+	}
+	err = self.bufw.Flush()
 	return
 }
 
