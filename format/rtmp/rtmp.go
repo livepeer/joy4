@@ -288,7 +288,7 @@ func (self *Conn) pollCommand() (err error) {
 	}
 }
 
-func (self *Conn) pollAVTag() (tag flvio.Tag, err error) {
+func (self *Conn) pollAVTag(probing bool) (tag flvio.Tag, err error) {
 	for {
 		if err = self.pollMsg(); err != nil {
 			return
@@ -297,6 +297,27 @@ func (self *Conn) pollAVTag() (tag flvio.Tag, err error) {
 		case msgtypeidVideoMsg, msgtypeidAudioMsg:
 			tag = self.avtag
 			return
+		case msgtypeidDataMsgAMF0:
+			if probing {
+				onMetaDataFound := false
+				for _, val := range self.datamsgvals {
+					if onMetaDataFound {
+						vMap, ok := val.(flvio.AMFMap)
+						if vMap == nil || !ok {
+							break
+						}
+						if _, has := vMap["audiocodecid"]; has {
+							self.prober.HasAudio = true
+						}
+						if _, has := vMap["videocodecid"]; has {
+							self.prober.HasVideo = true
+						}
+						break
+					} else if vs, ok := val.(string); ok && vs == "onMetaData" {
+						onMetaDataFound = true
+					}
+				}
+			}
 		}
 	}
 }
@@ -589,7 +610,7 @@ func (self *Conn) checkCreateStreamResult() (ok bool, avmsgsid uint32) {
 func (self *Conn) probe() (err error) {
 	for !self.prober.Probed() {
 		var tag flvio.Tag
-		if tag, err = self.pollAVTag(); err != nil {
+		if tag, err = self.pollAVTag(true); err != nil {
 			return
 		}
 		if err = self.prober.PushTag(tag, int32(self.timestamp)); err != nil {
@@ -791,7 +812,7 @@ func (self *Conn) ReadPacket() (pkt av.Packet, err error) {
 
 	for {
 		var tag flvio.Tag
-		if tag, err = self.pollAVTag(); err != nil {
+		if tag, err = self.pollAVTag(false); err != nil {
 			return
 		}
 

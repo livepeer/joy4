@@ -14,7 +14,7 @@ import (
 	"io"
 )
 
-var MaxProbePacketCount = 20
+var MaxProbePacketCount = 200
 
 func NewMetadataByStreams(streams []av.CodecData) (metadata flvio.AMFMap, err error) {
 	metadata = flvio.AMFMap{}
@@ -155,7 +155,7 @@ func (self *Prober) Probed() (ok bool) {
 			return true
 		}
 	} else {
-		if self.PushedCount == MaxProbePacketCount {
+		if self.PushedCount == MaxProbePacketCount || self.GotAudio && self.GotVideo {
 			return true
 		}
 	}
