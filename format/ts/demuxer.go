@@ -52,9 +52,12 @@ func (self *Demuxer) probe() (err error) {
 						n++
 					}
 				}
-				if n == len(self.streams) {
+				if n == 2 {
 					break
 				}
+				// if n == len(self.streams) {
+				// 	break
+				// }
 			}
 			if err = self.poll(); err != nil {
 				return
@@ -116,6 +119,8 @@ func (self *Demuxer) initPMT(payload []byte) (err error) {
 		case tsio.ElementaryStreamTypeH264:
 			self.streams = append(self.streams, stream)
 		case tsio.ElementaryStreamTypeAdtsAAC:
+			self.streams = append(self.streams, stream)
+		default:
 			self.streams = append(self.streams, stream)
 		}
 	}
