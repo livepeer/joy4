@@ -105,7 +105,7 @@ func (self *Prober) PushTag(tag flvio.Tag, timestamp int32) (err error) {
 		case flvio.SOUND_AAC:
 			switch tag.AACPacketType {
 			case flvio.AAC_SEQHDR:
-				if !self.GotAudio {
+				if !self.GotAudio && len(tag.Data) > 0 {
 					var stream aacparser.CodecData
 					if stream, err = aacparser.NewCodecDataFromMPEG4AudioConfigBytes(tag.Data); err != nil {
 						err = fmt.Errorf("flv: aac seqhdr invalid")
