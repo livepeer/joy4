@@ -386,8 +386,18 @@ func ReadFileAtoms(r io.ReadSeeker) (atoms []Atom, err error) {
 			}
 			return
 		}
-		size := pio.U32BE(taghdr[0:])
+		size := uint64(pio.U32BE(taghdr[0:]))
 		tag := Tag(pio.U32BE(taghdr[4:]))
+		if size == 1 {
+			if _, err = io.ReadFull(r, taghdr); err != nil {
+				if err == io.EOF {
+					err = nil
+				}
+				return
+			}
+
+			size = pio.U64BE(taghdr) - 8
+		}
 
 		var atom Atom
 		switch tag {
