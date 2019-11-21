@@ -266,6 +266,14 @@ func (self *Conn) RxBytes() uint64 {
 }
 
 func (self *Conn) Close() (err error) {
+	if self.playing && self.writing {
+		self.writeCommandMsg(5, self.avmsgsid, "onStatus", self.commandtransid, nil, flvio.AMFMap{
+			"level":       "status",
+			"code":        "NetStream.Play.Stop",
+			"description": "Stop live",
+		})
+		self.flushWrite()
+	}
 	return self.netconn.Close()
 }
 
