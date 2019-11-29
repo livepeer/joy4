@@ -3,13 +3,14 @@ package ts
 import (
 	"bufio"
 	"fmt"
-	"time"
-	"github.com/livepeer/joy4/utils/bits/pio"
 	"github.com/livepeer/joy4/av"
-	"github.com/livepeer/joy4/format/ts/tsio"
 	"github.com/livepeer/joy4/codec/aacparser"
 	"github.com/livepeer/joy4/codec/h264parser"
+	"github.com/livepeer/joy4/format/ts/tsio"
+	"github.com/livepeer/joy4/jerrors"
+	"github.com/livepeer/joy4/utils/bits/pio"
 	"io"
+	"time"
 )
 
 type Demuxer struct {
@@ -34,6 +35,25 @@ func NewDemuxer(r io.Reader) *Demuxer {
 
 func (self *Demuxer) Streams() (streams []av.CodecData, err error) {
 	if err = self.probe(); err != nil {
+		if err == io.EOF {
+			var videoCodecFound, audioCodecFound bool
+			for _, stream := range self.streams {
+				if stream.CodecData != nil {
+					if stream.CodecData.Type().IsVideo() {
+						videoCodecFound = true
+					}
+					if stream.CodecData.Type().IsAudio() {
+						audioCodecFound = true
+					}
+				}
+			}
+			if !audioCodecFound {
+				err = jerrors.ErrNoAudioInfoFound
+			}
+			if !videoCodecFound {
+				err = jerrors.ErrNoVideoInfoFound
+			}
+		}
 		return
 	}
 	for _, stream := range self.streams {
