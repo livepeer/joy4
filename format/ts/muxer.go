@@ -7,7 +7,6 @@ import (
 	"github.com/livepeer/joy4/codec/h264parser"
 	"github.com/livepeer/joy4/format/ts/tsio"
 	"io"
-	"time"
 )
 
 var CodecTypes = []av.CodecType{av.H264, av.AAC}
@@ -154,7 +153,6 @@ func (self *Muxer) WriteHeader(streams []av.CodecData) (err error) {
 
 func (self *Muxer) WritePacket(pkt av.Packet) (err error) {
 	stream := self.streams[pkt.Idx]
-	pkt.Time += time.Second
 
 	switch stream.Type() {
 	case av.AAC:
