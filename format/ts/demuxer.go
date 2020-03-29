@@ -14,6 +14,7 @@ import (
 )
 
 type Demuxer struct {
+	NumStreamsToFind int
 	r *bufio.Reader
 
 	pkts []av.Packet
@@ -28,6 +29,7 @@ type Demuxer struct {
 
 func NewDemuxer(r io.Reader) *Demuxer {
 	return &Demuxer{
+		NumStreamsToFind: 2,
 		tshdr: make([]byte, 188),
 		r: bufio.NewReaderSize(r, pio.RecommendBufioSize),
 	}
@@ -72,7 +74,7 @@ func (self *Demuxer) probe() (err error) {
 						n++
 					}
 				}
-				if n == 2 {
+				if n == self.NumStreamsToFind {
 					break
 				}
 				// if n == len(self.streams) {
