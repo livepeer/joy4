@@ -92,7 +92,7 @@ func (self *Muxer) newStream(codec av.CodecData) (err error) {
 
 func (self *Stream) fillTrackAtom() (err error) {
 	self.trackAtom.Media.Header.TimeScale = int32(self.timeScale)
-	self.trackAtom.Media.Header.Duration = int32(self.duration)
+	self.trackAtom.Media.Header.Duration = uint64(self.duration)
 
 	if self.Type() == av.H264 {
 		codec := self.CodecData.(h264parser.CodecData)

@@ -942,14 +942,14 @@ func (self Media) Children() (r []Atom) {
 }
 
 type MediaHeader struct {
-	Version		uint8
-	Flags		uint32
-	CreateTime	time.Time
-	ModifyTime	time.Time
-	TimeScale	int32
-	Duration	int32
-	Language	int16
-	Quality		int16
+	Version    uint8
+	Flags      uint32
+	CreateTime time.Time
+	ModifyTime time.Time
+	TimeScale  int32
+	Duration   uint64
+	Language   int16
+	Quality    int16
 	AtomPos
 }
 
@@ -964,14 +964,26 @@ func (self MediaHeader) marshal(b []byte) (n int) {
 	n += 1
 	pio.PutU24BE(b[n:], self.Flags)
 	n += 3
-	PutTime32(b[n:], self.CreateTime)
-	n += 4
-	PutTime32(b[n:], self.ModifyTime)
-	n += 4
+	if self.Version == 1 {
+		PutTime64(b[n:], self.CreateTime)
+		n += 8
+		PutTime64(b[n:], self.ModifyTime)
+		n += 8
+	} else {
+		PutTime32(b[n:], self.CreateTime)
+		n += 4
+		PutTime32(b[n:], self.ModifyTime)
+		n += 4
+	}
 	pio.PutI32BE(b[n:], self.TimeScale)
 	n += 4
-	pio.PutI32BE(b[n:], self.Duration)
-	n += 4
+	if self.Version == 1 {
+		pio.PutU64BE(b[n:], self.Duration)
+		n += 8
+	} else {
+		pio.PutI32BE(b[n:], int32(self.Duration))
+		n += 4
+	}
 	pio.PutI16BE(b[n:], self.Language)
 	n += 2
 	pio.PutI16BE(b[n:], self.Quality)
@@ -1005,30 +1017,54 @@ func (self *MediaHeader) Unmarshal(b []byte, offset int) (n int, err error) {
 	}
 	self.Flags = pio.U24BE(b[n:])
 	n += 3
-	if len(b) < n+4 {
-		err = parseErr("CreateTime", n+offset, err)
-		return
+	if self.Version == 1 {
+		if len(b) < n+8 {
+			err = parseErr("CreateTime", n+offset, err)
+			return
+		}
+		self.CreateTime = GetTime64(b[n:])
+		n += 8
+		if len(b) < n+8 {
+			err = parseErr("ModifyTime", n+offset, err)
+			return
+		}
+		self.ModifyTime = GetTime64(b[n:])
+		n += 8
+	} else {
+		if len(b) < n+4 {
+			err = parseErr("CreateTime", n+offset, err)
+			return
+		}
+		self.CreateTime = GetTime32(b[n:])
+		n += 4
+		if len(b) < n+4 {
+			err = parseErr("ModifyTime", n+offset, err)
+			return
+		}
+		self.ModifyTime = GetTime32(b[n:])
+		n += 4
 	}
-	self.CreateTime = GetTime32(b[n:])
-	n += 4
-	if len(b) < n+4 {
-		err = parseErr("ModifyTime", n+offset, err)
-		return
-	}
-	self.ModifyTime = GetTime32(b[n:])
-	n += 4
 	if len(b) < n+4 {
 		err = parseErr("TimeScale", n+offset, err)
 		return
 	}
 	self.TimeScale = pio.I32BE(b[n:])
 	n += 4
-	if len(b) < n+4 {
-		err = parseErr("Duration", n+offset, err)
-		return
+	if self.Version == 1 {
+		if len(b) < n+9 {
+			err = parseErr("Duration", n+offset, err)
+			return
+		}
+		self.Duration = pio.U64BE(b[n:])
+		n += 8
+	} else {
+		if len(b) < n+4 {
+			err = parseErr("Duration", n+offset, err)
+			return
+		}
+		self.Duration = uint64(pio.U32BE(b[n:]))
+		n += 4
 	}
-	self.Duration = pio.I32BE(b[n:])
-	n += 4
 	if len(b) < n+2 {
 		err = parseErr("Language", n+offset, err)
 		return
