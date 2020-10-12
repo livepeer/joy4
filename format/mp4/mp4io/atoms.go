@@ -106,6 +106,7 @@ func (self CompositionOffset) Tag() Tag {
 }
 
 const STCO = Tag(0x7374636f)
+const CO64 = Tag(0x636f3634)
 
 func (self ChunkOffset) Tag() Tag {
 	return STCO
@@ -1676,6 +1677,15 @@ func (self *SampleTable) Unmarshal(b []byte, offset int) (n int, err error) {
 				}
 				self.ChunkOffset = atom
 			}
+		case CO64:
+			{
+				atom := &ChunkOffset{Is64: true}
+				if _, err = atom.Unmarshal(b[n:n+size], offset+n); err != nil {
+					err = parseErr("co64", n+offset, err)
+					return
+				}
+				self.ChunkOffset = atom
+			}
 		case STSZ:
 			{
 				atom := &SampleSize{}
@@ -2565,15 +2575,20 @@ func (self SyncSample) Children() (r []Atom) {
 }
 
 type ChunkOffset struct {
-	Version	uint8
-	Flags	uint32
-	Entries	[]uint32
+	Is64    bool
+	Version uint8
+	Flags   uint32
+	Entries []uint64
 	AtomPos
 }
 
 func (self ChunkOffset) Marshal(b []byte) (n int) {
-	pio.PutU32BE(b[4:], uint32(STCO))
-	n += self.marshal(b[8:])+8
+	if self.Is64 {
+		pio.PutU32BE(b[4:], uint32(CO64))
+	} else {
+		pio.PutU32BE(b[4:], uint32(STCO))
+	}
+	n += self.marshal(b[8:]) + 8
 	pio.PutU32BE(b[0:], uint32(n))
 	return
 }
@@ -2585,8 +2600,13 @@ func (self ChunkOffset) marshal(b []byte) (n int) {
 	pio.PutU32BE(b[n:], uint32(len(self.Entries)))
 	n += 4
 	for _, entry := range self.Entries {
-		pio.PutU32BE(b[n:], entry)
-		n += 4
+		if self.Is64 {
+			pio.PutU64BE(b[n:], entry)
+			n += 8
+		} else {
+			pio.PutU32BE(b[n:], uint32(entry))
+			n += 4
+		}
 	}
 	return
 }
@@ -2595,7 +2615,11 @@ func (self ChunkOffset) Len() (n int) {
 	n += 1
 	n += 3
 	n += 4
-	n += 4*len(self.Entries)
+	if self.Is64 {
+		n += 8 * len(self.Entries)
+	} else {
+		n += 4 * len(self.Entries)
+	}
 	return
 }
 func (self *ChunkOffset) Unmarshal(b []byte, offset int) (n int, err error) {
@@ -2616,14 +2640,23 @@ func (self *ChunkOffset) Unmarshal(b []byte, offset int) (n int, err error) {
 	var _len_Entries uint32
 	_len_Entries = pio.U32BE(b[n:])
 	n += 4
-	self.Entries = make([]uint32, _len_Entries)
-	if len(b) < n+4*len(self.Entries) {
+	self.Entries = make([]uint64, _len_Entries)
+	esize := 4
+	if self.Is64 {
+		esize = 8
+	}
+	if len(b) < n+esize*len(self.Entries) {
 		err = parseErr("uint32", n+offset, err)
 		return
 	}
 	for i := range self.Entries {
-		self.Entries[i] = pio.U32BE(b[n:])
-		n += 4
+		if self.Is64 {
+			self.Entries[i] = pio.U64BE(b[n:])
+			n += 8
+		} else {
+			self.Entries[i] = uint64(pio.U32BE(b[n:]))
+			n += 4
+		}
 	}
 	return
 }

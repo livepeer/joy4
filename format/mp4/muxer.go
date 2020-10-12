@@ -211,7 +211,7 @@ func (self *Stream) writePacket(pkt av.Packet, rawdur time.Duration) (err error)
 
 	self.duration += int64(duration)
 	self.sampleIndex++
-	self.sample.ChunkOffset.Entries = append(self.sample.ChunkOffset.Entries, uint32(self.muxer.wpos))
+	self.sample.ChunkOffset.Entries = append(self.sample.ChunkOffset.Entries, uint64(self.muxer.wpos))
 	self.sample.SampleSize.Entries = append(self.sample.SampleSize.Entries, uint32(len(pkt.Data)))
 
 	self.muxer.wpos += int64(len(pkt.Data))
