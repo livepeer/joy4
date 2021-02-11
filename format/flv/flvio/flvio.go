@@ -13,7 +13,9 @@ func TsToTime(ts int32) time.Duration {
 }
 
 func TimeToTs(tm time.Duration) int32 {
-	return int32(tm / time.Millisecond)
+	// round up - match ffmpeg's behaviour
+	r := (tm + time.Millisecond - 1) / time.Millisecond
+	return int32(r)
 }
 
 const MaxTagSubHeaderLength = 16
