@@ -315,13 +315,16 @@ func (self *Demuxer) ReadPacket() (pkt av.Packet, err error) {
 		}
 	}
 	if false {
-		fmt.Printf("ReadPacket: chosen index=%v time=%v\n", chosen.idx, chosen.tsToTime(chosen.dts))
+		fmt.Printf("ReadPacket: chosen index=%v time=%v timeRaw=%v timeScale=%d\n", chosen.idx, chosen.tsToTime(chosen.dts), chosen.dts, chosen.timeScale)
 	}
+	dts := chosen.dts
 	tm := chosen.tsToTime(chosen.dts)
 	if pkt, err = chosen.readPacket(); err != nil {
 		return
 	}
 	pkt.Time = tm
+	pkt.TimeScale = chosen.timeScale
+	pkt.TimeB = dts
 	pkt.Idx = int8(chosenidx)
 	return
 }
@@ -386,6 +389,7 @@ func (self *Stream) readPacket() (pkt av.Packet, err error) {
 	//println("pts/dts", self.ptsEntryIndex, self.dtsEntryIndex)
 	if self.sample.CompositionOffset != nil && len(self.sample.CompositionOffset.Entries) > 0 {
 		cts := int64(self.sample.CompositionOffset.Entries[self.cttsEntryIndex].Offset)
+		pkt.CompositionTimeB = cts
 		pkt.CompositionTime = self.tsToTime(cts)
 	}
 

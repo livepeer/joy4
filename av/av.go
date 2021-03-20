@@ -232,6 +232,9 @@ type Packet struct {
 	Idx             int8 // stream index in container format
 	CompositionTime time.Duration // packet presentation time minus decode time for H264 B-Frame
 	Time time.Duration // packet decode time
+	TimeScale int64
+	TimeB int64 // packet dts in TimeScale units
+	CompositionTimeB int64 //  cts in TimeScale units
 	Data            []byte // packet data
 }
 
