@@ -3,19 +3,20 @@ package ts
 import (
 	"bufio"
 	"fmt"
+	"io"
+	"time"
+
 	"github.com/livepeer/joy4/av"
 	"github.com/livepeer/joy4/codec/aacparser"
 	"github.com/livepeer/joy4/codec/h264parser"
 	"github.com/livepeer/joy4/format/ts/tsio"
 	"github.com/livepeer/joy4/jerrors"
 	"github.com/livepeer/joy4/utils/bits/pio"
-	"io"
-	"time"
 )
 
 type Demuxer struct {
 	NumStreamsToFind int
-	r *bufio.Reader
+	r                *bufio.Reader
 
 	pkts []av.Packet
 
@@ -30,8 +31,8 @@ type Demuxer struct {
 func NewDemuxer(r io.Reader) *Demuxer {
 	return &Demuxer{
 		NumStreamsToFind: 2,
-		tshdr: make([]byte, 188),
-		r: bufio.NewReaderSize(r, pio.RecommendBufioSize),
+		tshdr:            make([]byte, 188),
+		r:                bufio.NewReaderSize(r, pio.RecommendBufioSize),
 	}
 }
 
@@ -126,7 +127,7 @@ func (self *Demuxer) initPMT(payload []byte) (err error) {
 		return
 	}
 	self.pmt = &tsio.PMT{}
-	if _, err = self.pmt.Unmarshal(payload[psihdrlen:psihdrlen+datalen]); err != nil {
+	if _, err = self.pmt.Unmarshal(payload[psihdrlen : psihdrlen+datalen]); err != nil {
 		return
 	}
 
@@ -183,7 +184,7 @@ func (self *Demuxer) readTSPacket() (err error) {
 				return
 			}
 			self.pat = &tsio.PAT{}
-			if _, err = self.pat.Unmarshal(payload[psihdrlen:psihdrlen+datalen]); err != nil {
+			if _, err = self.pat.Unmarshal(payload[psihdrlen : psihdrlen+datalen]); err != nil {
 				return
 			}
 		}
@@ -219,13 +220,13 @@ func (self *Stream) addPacket(payload []byte, timedelta time.Duration) {
 
 	demuxer := self.demuxer
 	pkt := av.Packet{
-		Idx: int8(self.idx),
+		Idx:        int8(self.idx),
 		IsKeyFrame: self.iskeyframe,
-		Time: dts+timedelta,
-		Data: payload,
+		Time:       dts + timedelta,
+		Data:       payload,
 	}
 	if pts != dts {
-		pkt.CompositionTime = pts-dts
+		pkt.CompositionTime = pts - dts
 	}
 	demuxer.pkts = append(demuxer.pkts, pkt)
 }

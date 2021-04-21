@@ -8,16 +8,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/livepeer/joy4/utils/bits/pio"
-	"github.com/livepeer/joy4/av"
-	"github.com/livepeer/joy4/av/avutil"
-	"github.com/livepeer/joy4/format/flv"
-	"github.com/livepeer/joy4/format/flv/flvio"
 	"io"
 	"net"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/livepeer/joy4/av"
+	"github.com/livepeer/joy4/av/avutil"
+	"github.com/livepeer/joy4/format/flv"
+	"github.com/livepeer/joy4/format/flv/flvio"
+	"github.com/livepeer/joy4/utils/bits/pio"
 )
 
 // Debug enables debug output

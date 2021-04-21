@@ -2,11 +2,12 @@
 package pubsub
 
 import (
-	"github.com/livepeer/joy4/av"
-	"github.com/livepeer/joy4/av/pktque"
 	"io"
 	"sync"
 	"time"
+
+	"github.com/livepeer/joy4/av"
+	"github.com/livepeer/joy4/av/pktque"
 )
 
 //        time

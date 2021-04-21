@@ -2,11 +2,12 @@ package ts
 
 import (
 	"fmt"
+	"io"
+
 	"github.com/livepeer/joy4/av"
 	"github.com/livepeer/joy4/codec/aacparser"
 	"github.com/livepeer/joy4/codec/h264parser"
 	"github.com/livepeer/joy4/format/ts/tsio"
-	"io"
 )
 
 var CodecTypes = []av.CodecType{av.H264, av.AAC}

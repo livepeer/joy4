@@ -3,7 +3,8 @@ package flv
 import (
 	"bufio"
 	"fmt"
-	"github.com/livepeer/joy4/utils/bits/pio"
+	"io"
+
 	"github.com/livepeer/joy4/av"
 	"github.com/livepeer/joy4/av/avutil"
 	"github.com/livepeer/joy4/codec"
@@ -11,7 +12,7 @@ import (
 	"github.com/livepeer/joy4/codec/fake"
 	"github.com/livepeer/joy4/codec/h264parser"
 	"github.com/livepeer/joy4/format/flv/flvio"
-	"io"
+	"github.com/livepeer/joy4/utils/bits/pio"
 )
 
 var MaxProbePacketCount = 200
