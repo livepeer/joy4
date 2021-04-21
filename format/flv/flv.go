@@ -465,6 +465,8 @@ func (self *Demuxer) ReadPacket() (pkt av.Packet, err error) {
 		if tag, timestamp, err = flvio.ReadTag(self.bufr, self.b); err != nil {
 			return
 		}
+		fmt.Printf("tag type %d sound type %d sound format %d sound size %d sound rate %d sound pack type %d\n",
+		 tag.Type, tag.SoundType, tag.SoundFormat, tag.SoundSize, tag.SoundRate, tag.AACPacketType)
 
 		var ok bool
 		if pkt, ok = self.prober.TagToPacket(tag, timestamp); ok {

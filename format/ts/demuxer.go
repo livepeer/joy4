@@ -303,6 +303,7 @@ func (self *Stream) handleTSPacket(start bool, iskeyframe bool, payload []byte) 
 		if hdrlen, _, self.datalen, self.pts, self.dts, err = tsio.ParsePESHeader(payload); err != nil {
 			return
 		}
+		fmt.Printf("ts packet pts %s dts %s\n", self.pts, self.dts)
 		self.iskeyframe = iskeyframe
 		if self.datalen == 0 {
 			self.data = make([]byte, 0, 4096)

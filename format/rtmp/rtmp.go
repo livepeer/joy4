@@ -145,7 +145,8 @@ type Conn struct {
 	txbytes uint64
 	rxbytes uint64
 
-	bufr *bufio.Reader
+	// bufr *bufio.Reader
+	bufr *txrxcount
 	bufw *bufio.Writer
 	ackn uint32
 
@@ -175,6 +176,7 @@ type Conn struct {
 
 	gotmsg      bool
 	timestamp   uint32
+	prevTimestamp   uint32
 	msgdata     []byte
 	msgtypeid   uint8
 	datamsgvals []interface{}
@@ -185,18 +187,29 @@ type Conn struct {
 
 type txrxcount struct {
 	io.ReadWriter
-	txbytes uint64
-	rxbytes uint64
+	txbytes  uint64
+	rxbytes  uint64
+	lastRead time.Time
 }
 
 func (self *txrxcount) Read(p []byte) (int, error) {
 	n, err := self.ReadWriter.Read(p)
+	// fmt.Printf("--> read %d bytes\n", n)
+	now := time.Now()
+	if self.rxbytes > 0 && n > 0 {
+		// since := now.Sub(self.lastRead)
+		// speed := float64(n) / since.Seconds()
+		// fmt.Printf("--> read speed %f\n", speed)
+
+	}
 	self.rxbytes += uint64(n)
+	self.lastRead = now
 	return n, err
 }
 
 func (self *txrxcount) Write(p []byte) (int, error) {
 	n, err := self.ReadWriter.Write(p)
+	fmt.Printf("--> write %d bytes\n", n)
 	self.txbytes += uint64(n)
 	return n, err
 }
@@ -208,8 +221,9 @@ func NewConn(netconn net.Conn) *Conn {
 	conn.readcsmap = make(map[uint32]*chunkStream)
 	conn.readMaxChunkSize = 128
 	conn.writeMaxChunkSize = 128
-	conn.bufr = bufio.NewReaderSize(netconn, pio.RecommendBufioSize)
+	// conn.bufr = bufio.NewReaderSize(netconn, pio.RecommendBufioSize)
 	conn.bufw = bufio.NewWriterSize(netconn, pio.RecommendBufioSize)
+	conn.bufr = &txrxcount{ReadWriter: netconn}
 	conn.txrxcount = &txrxcount{ReadWriter: netconn}
 	conn.writebuf = make([]byte, 4096)
 	conn.readbuf = make([]byte, 4096)
@@ -266,6 +280,7 @@ func (self *Conn) RxBytes() uint64 {
 }
 
 func (self *Conn) Close() (err error) {
+	fmt.Println("rtmp > conn > close")
 	if self.playing && self.writing {
 		self.writeCommandMsg(5, self.avmsgsid, "onStatus", self.commandtransid, nil, flvio.AMFMap{
 			"level":       "status",
@@ -620,6 +635,9 @@ func (self *Conn) probe() (err error) {
 					if _, has := vMap["videocodecid"]; has {
 						self.prober.HasVideo = true
 					}
+					if Debug {
+						fmt.Printf("rtmp: > onMetaData > %+v\n", vMap)
+					}
 					break
 				} else if vs, ok := val.(string); ok && vs == "onMetaData" {
 					onMetaDataFound = true
@@ -827,6 +845,17 @@ func (self *Conn) ReadPacket() (pkt av.Packet, err error) {
 		if tag, err = self.pollAVTag(); err != nil {
 			return
 		}
+		if tag.Type == flvio.TAG_AUDIO {
+			tsDiff := self.timestamp-self.prevTimestamp 
+			fmt.Printf("self timestamp %5d tsdiff %3d tag type %d sound type %d sound format %d sound size %d sound rate %d sound pack type %d comp time %d data len %d\n",
+				self.timestamp, tsDiff, tag.Type, tag.SoundType, tag.SoundFormat, tag.SoundSize, tag.SoundRate, tag.AACPacketType, tag.CompositionTime, len(tag.Data))
+			self.prevTimestamp = self.timestamp
+		} else if tag.Type == flvio.TAG_VIDEO {
+			fmt.Printf("self timestamp %5d tag type %d frame type %d codec id %d AVCPacketType %d comp time %d data len %d\n",
+				self.timestamp, tag.Type, tag.FrameType, tag.CodecID, tag.AVCPacketType, tag.CompositionTime, len(tag.Data))
+		} else {
+			panic(fmt.Errorf("unknow tag %+v", tag))
+		}
 
 		var ok bool
 		if pkt, ok = self.prober.TagToPacket(tag, int32(self.timestamp)); ok {
@@ -894,6 +923,9 @@ func (self *Conn) Streams() (streams []av.CodecData, err error) {
 	return
 }
 
+var lastDTS time.Duration
+var lastTimeStamp int32
+
 func (self *Conn) WritePacket(pkt av.Packet) (err error) {
 	if err = self.prepare(stageCodecDataDone, prepareWriting); err != nil {
 		return
@@ -902,8 +934,24 @@ func (self *Conn) WritePacket(pkt av.Packet) (err error) {
 	stream := self.streams[pkt.Idx]
 	tag, timestamp := flv.PacketToTag(pkt, stream)
 
-	if Debug {
-		fmt.Println("rtmp: WritePacket", pkt.Idx, pkt.Time, pkt.CompositionTime)
+	if Debug  {
+		fmt.Printf("rtmp: WritePacket idx=%d dts=%s cts=%s isKeyframe=%v timestamp=%d\n", pkt.Idx, pkt.Time, pkt.CompositionTime, pkt.IsKeyFrame, timestamp)
+	}
+	switch stream.Type() {
+	case av.AAC:
+		// case av.H264:
+		// fmt.Printf("rtmp: WritePacket idx=%d dts=%s cts=%s isKeyframe=%v timestamp=%d\n", pkt.Idx, pkt.Time, pkt.CompositionTime, pkt.IsKeyFrame, timestamp)
+		if lastDTS > 0 {
+			if lastDTS == pkt.Time {
+				panic("last dts is same")
+			}
+			if lastTimeStamp == timestamp {
+				panic("last timestamp is same")
+			}
+		}
+		lastDTS = pkt.Time
+		lastTimeStamp = timestamp
+		// timestamp += 44
 	}
 
 	if err = self.writeAVTag(tag, int32(timestamp)); err != nil {
@@ -1128,7 +1176,7 @@ func (self *Conn) fillChunkHeader(b []byte, csid uint32, timestamp int32, msgtyp
 	}
 
 	if Debug {
-		fmt.Printf("rtmp: write chunk msgdatalen=%d msgsid=%d\n", msgdatalen, msgsid)
+		fmt.Printf("rtmp: write chunk msgdatalen=%d msgsid=%d csid=%d msgtypeid %d timestamp=%d\n", msgdatalen, msgsid, csid, msgtypeid, timestamp)
 	}
 
 	return
@@ -1334,13 +1382,13 @@ func (self *Conn) readChunk() (err error) {
 	n += len(buf)
 	cs.msgdataleft -= uint32(size)
 
-	if Debug {
-		fmt.Printf("rtmp: chunk msgsid=%d msgtypeid=%d msghdrtype=%d len=%d left=%d\n",
-			cs.msgsid, cs.msgtypeid, cs.msghdrtype, cs.msgdatalen, cs.msgdataleft)
+	if Debug && timestamp > 0 {
+		fmt.Printf("rtmp: chunk msgsid=%d msgtypeid=%d msghdrtype=%d len=%d left=%d timestamp=%d timenow=%d\n",
+			cs.msgsid, cs.msgtypeid, cs.msghdrtype, cs.msgdatalen, cs.msgdataleft, timestamp, cs.timenow)
 	}
 
 	if cs.msgdataleft == 0 {
-		if Debug {
+		if Debug && false {
 			fmt.Println("rtmp: chunk data")
 			fmt.Print(hex.Dump(cs.msgdata))
 		}
@@ -1686,6 +1734,7 @@ type closeConn struct {
 }
 
 func (self closeConn) Close() error {
+	fmt.Println("rtmp > closeConn > Close")
 	self.waitclose <- true
 	return nil
 }

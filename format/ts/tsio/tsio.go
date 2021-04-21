@@ -191,6 +191,8 @@ func (self PMT) parseDescs(b []byte) (descs []Descriptor, err error) {
 		if n+2 <= len(b) {
 			desc := Descriptor{}
 			desc.Tag = b[n]
+			fmt.Printf("desc tag %x\n", desc.Tag)
+			// panic("fu")
 			desc.Data = make([]byte, b[n+1])
 			n += 2
 			if n+len(desc.Data) <= len(b) {
@@ -432,13 +434,18 @@ func ParsePESHeader(h []byte) (hdrlen int, streamid uint8, datalen int, pts, dts
 			err = ErrPESHeader
 			return
 		}
-		pts = TsToTime(pio.U40BE(h[9:14]))
+		tsRaw := pio.U40BE(h[9:14])
+		pts = TsToTime(tsRaw)
+		// fmt.Printf("tsio: pts raw %d pts raw %b pts %s\n", tsRaw, tsRaw, pts)
+		// pts = TsToTime(pio.U40BE(h[9:14]))
 		if flags&DTS != 0 {
 			if len(h) < 19 {
 				err = ErrPESHeader
 				return
 			}
+			// dtsRaw := pio.U40BE(h[14:19])
 			dts = TsToTime(pio.U40BE(h[14:19]))
+			// fmt.Printf("tsio: dts raw %d dts raw %b dts %s\n", dtsRaw, dtsRaw, dts)
 		}
 	}
 
