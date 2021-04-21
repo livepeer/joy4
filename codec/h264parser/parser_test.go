@@ -3,19 +3,25 @@ package h264parser
 import (
 	"encoding/hex"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestParser(t *testing.T) {
-	var ok bool
+	assert := assert.New(t)
+	var typ int
 	var nalus [][]byte
 
 	annexbFrame, _ := hex.DecodeString("00000001223322330000000122332233223300000133000001000001")
-	nalus, ok = SplitNALUs(annexbFrame)
-	t.Log(ok, len(nalus))
+	nalus, typ = SplitNALUs(annexbFrame)
+	assert.Len(nalus, 3)
+	assert.Equal(NALU_ANNEXB, typ)
 
 	avccFrame, _ := hex.DecodeString(
 		"00000008aabbccaabbccaabb00000001aa",
 	)
-	nalus, ok = SplitNALUs(avccFrame)
-	t.Log(ok, len(nalus))
+	nalus, typ = SplitNALUs(avccFrame)
+	t.Log(typ, len(nalus))
+	assert.Len(nalus, 2)
+	assert.Equal(NALU_AVCC, typ)
 }
