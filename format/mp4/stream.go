@@ -40,6 +40,8 @@ type Stream struct {
 
 	sttsEntry *mp4io.TimeToSampleEntry
 	cttsEntry *mp4io.CompositionOffsetEntry
+
+	eof bool
 }
 
 func timeToTs(tm time.Duration, timeScale int64) int64 {

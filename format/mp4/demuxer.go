@@ -317,10 +317,13 @@ func (self *Demuxer) ReadPacket() (pkt av.Packet, err error) {
 	var chosen *Stream
 	var chosenidx int
 	for i, stream := range self.streams {
-		if chosen == nil || stream.tsToTime(stream.dts) < chosen.tsToTime(chosen.dts) {
+		if (chosen == nil || stream.tsToTime(stream.dts) < chosen.tsToTime(chosen.dts)) && !stream.eof {
 			chosen = stream
 			chosenidx = i
 		}
+	}
+	if chosen == nil {
+		return pkt, io.EOF
 	}
 	if false {
 		fmt.Printf("ReadPacket: chosen index=%v time=%v timeRaw=%v timeScale=%d\n", chosen.idx, chosen.tsToTime(chosen.dts), chosen.dts, chosen.timeScale)
@@ -328,6 +331,18 @@ func (self *Demuxer) ReadPacket() (pkt av.Packet, err error) {
 	dts := chosen.dts
 	tm := chosen.tsToTime(chosen.dts)
 	if pkt, err = chosen.readPacket(); err != nil {
+		if err == io.EOF {
+			chosen.eof = true
+			eofNum := 0
+			for _, stream := range self.streams {
+				if stream.eof {
+					eofNum++
+				}
+			}
+			if eofNum < len(self.streams) {
+				return self.ReadPacket()
+			}
+		}
 		return
 	}
 	pkt.Time = tm
