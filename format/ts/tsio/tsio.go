@@ -3,6 +3,7 @@ package tsio
 import (
 	"fmt"
 	"io"
+	"math/bits"
 	"time"
 
 	"github.com/livepeer/joy4/utils/bits/pio"
@@ -374,8 +375,9 @@ func FillPSI(h []byte, tableid uint8, tableext uint16, datalen int) (n int) {
 }
 
 func TimeToPCR(tm time.Duration) (pcr uint64) {
-	// base(33)+resverd(6)+ext(9)
-	ts := uint64(tm * PCR_HZ / time.Second)
+	// base(33)+reserved(6)+ext(9)
+	hi, lo := bits.Mul64(uint64(tm), PCR_HZ)
+	ts, _ := bits.Div64(hi, lo, uint64(time.Second))
 	base := ts / 300
 	ext := ts % 300
 	pcr = base<<15 | 0x3f<<9 | ext
@@ -391,7 +393,8 @@ func PCRToTime(pcr uint64) (tm time.Duration) {
 }
 
 func TimeToTs(tm time.Duration) (v uint64) {
-	ts := uint64(tm * PTS_HZ / time.Second)
+	hi, lo := bits.Mul64(uint64(tm), PTS_HZ)
+	ts, _ := bits.Div64(hi, lo, uint64(time.Second))
 	// 0010	PTS 32..30 1	PTS 29..15 1 PTS 14..00 1
 	v = ((ts>>30)&0x7)<<33 | ((ts>>15)&0x7fff)<<17 | (ts&0x7fff)<<1 | 0x100010001
 	return
