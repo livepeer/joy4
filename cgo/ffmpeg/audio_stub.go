@@ -69,3 +69,13 @@ func (self *AudioEncoder) SetChannelLayout(ch av.ChannelLayout) (err error) {
 func (self *AudioEncoder) SetOption(key string, val interface{}) (err error) {
 	return
 }
+
+func (self *AudioEncoder) SetSampleFormat(fmt av.SampleFormat) (err error) {
+	self.SampleFormat = fmt
+	return
+}
+
+func (self *AudioEncoder) SetSampleRate(rate int) (err error) {
+	self.SampleRate = rate
+	return
+}

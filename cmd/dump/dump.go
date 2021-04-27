@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/livepeer/joy4/av"
 	"github.com/livepeer/joy4/av/avutil"
@@ -15,8 +16,12 @@ func init() {
 
 func main() {
 	fmt.Println("start")
+	fileName := "26.ts"
+	if len(os.Args) > 1 {
+		fileName = os.Args[1]
+	}
 	// file, err := avutil.Open("probe.ts")
-	file, err := avutil.Open("26.ts")
+	file, err := avutil.Open(fileName)
 	fmt.Printf("%T\n", file)
 	hd := file.(*avutil.HandlerDemuxer)
 	fmt.Printf("%T\n", hd.Demuxer)
@@ -58,8 +63,9 @@ func main() {
 			panic(err)
 		}
 		if x.Idx == int8(videoidx) {
-			fmt.Printf("Packet idx %d key %v time %s cts %s (%s) raw time %d cts %d\n",
-				x.Idx, x.IsKeyFrame, x.Time, x.CompositionTime, x.Time+x.CompositionTime, x.TimeB, x.CompositionTimeB)
+			fmt.Printf("Packet idx %d key %v time %s cts %s (%s) raw time %d cts %d timeScale %d\n",
+				x.Idx, x.IsKeyFrame, x.Time, x.CompositionTime, x.Time+x.CompositionTime, x.TimeTS,
+				x.CompositionTimeTS, x.TimeScale)
 		}
 	}
 }

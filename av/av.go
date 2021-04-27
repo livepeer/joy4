@@ -174,6 +174,7 @@ const avCodecTypeMagic = 233333
 // for H264, CodecData is AVCDecoderConfigure bytes, includes SPS/PPS.
 type CodecData interface {
 	Type() CodecType // Video/Audio codec type
+	TimeScale() uint32
 }
 
 type VideoCodecData interface {
@@ -227,14 +228,15 @@ type DemuxCloser interface {
 
 // Packet stores compressed audio/video data.
 type Packet struct {
-	IsKeyFrame       bool          // video packet is key frame
-	Idx              int8          // stream index in container format
-	CompositionTime  time.Duration // packet presentation time minus decode time for H264 B-Frame
-	Time             time.Duration // packet decode time
-	TimeScale        int64
-	TimeB            int64  // packet dts in TimeScale units
-	CompositionTimeB int64  //  cts in TimeScale units
-	Data             []byte // packet data
+	IsKeyFrame        bool          // video packet is key frame
+	Idx               int8          // stream index in container format
+	CompositionTime   time.Duration // packet presentation time minus decode time for H264 B-Frame
+	Time              time.Duration // packet decode time
+	TimeTS            int64         // packet dts in TimeScale units
+	CompositionTimeTS int64         //  cts in TimeScale units
+	TimeScale         int64         // Having it here allows to mix packets from different sources
+	// with different timescales
+	Data []byte // packet data
 }
 
 // Raw audio frame.

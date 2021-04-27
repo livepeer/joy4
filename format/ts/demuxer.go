@@ -211,11 +211,16 @@ func (self *Demuxer) readTSPacket() (err error) {
 	return
 }
 
-func (self *Stream) addPacket(payload []byte, timedelta time.Duration) {
+func (self *Stream) addPacket(payload []byte, timedelta time.Duration, timeDeltaTS int64) {
 	dts := self.dts
 	pts := self.pts
+	dtsTS := self.dtsTS
+	ptsTS := self.ptsTS
 	if dts == 0 {
 		dts = pts
+	}
+	if dtsTS == 0 {
+		dtsTS = ptsTS
 	}
 
 	demuxer := self.demuxer
@@ -223,10 +228,15 @@ func (self *Stream) addPacket(payload []byte, timedelta time.Duration) {
 		Idx:        int8(self.idx),
 		IsKeyFrame: self.iskeyframe,
 		Time:       dts + timedelta,
+		TimeTS:     dtsTS + timeDeltaTS,
+		TimeScale:  tsio.PTS_HZ,
 		Data:       payload,
 	}
 	if pts != dts {
 		pkt.CompositionTime = pts - dts
+	}
+	if ptsTS != dtsTS {
+		pkt.CompositionTimeTS = ptsTS - dtsTS
 	}
 	demuxer.pkts = append(demuxer.pkts, pkt)
 }
@@ -247,6 +257,7 @@ func (self *Stream) payloadEnd() (n int, err error) {
 		var config aacparser.MPEG4AudioConfig
 
 		delta := time.Duration(0)
+		var deltaTS int64
 		for len(payload) > 0 {
 			var hdrlen, framelen, samples int
 			if config, hdrlen, framelen, samples, err = aacparser.ParseADTSHeader(payload); err != nil {
@@ -256,10 +267,18 @@ func (self *Stream) payloadEnd() (n int, err error) {
 				if self.CodecData, err = aacparser.NewCodecDataFromMPEG4AudioConfig(config); err != nil {
 					return
 				}
+				if acd, ok := self.CodecData.(aacparser.CodecData); ok {
+					acd.TimeScale_ = tsio.PTS_HZ
+					self.CodecData = acd
+				}
 			}
-			self.addPacket(payload[hdrlen:framelen], delta)
+			self.addPacket(payload[hdrlen:framelen], delta, deltaTS)
 			n++
 			delta += time.Duration(samples) * time.Second / time.Duration(config.SampleRate)
+			deltaTS += int64(samples) * tsio.PTS_HZ / int64(config.SampleRate)
+			if false {
+				fmt.Printf("deltaTS %d samples %d sample rate %d delta %d\n", deltaTS, samples, config.SampleRate, delta)
+			}
 			payload = payload[framelen:]
 		}
 
@@ -279,7 +298,7 @@ func (self *Stream) payloadEnd() (n int, err error) {
 					b := make([]byte, 4+len(nalu))
 					pio.PutU32BE(b[0:4], uint32(len(nalu)))
 					copy(b[4:], nalu)
-					self.addPacket(b, time.Duration(0))
+					self.addPacket(b, time.Duration(0), 0)
 					n++
 				}
 			}
@@ -288,6 +307,10 @@ func (self *Stream) payloadEnd() (n int, err error) {
 		if self.CodecData == nil && len(sps) > 0 && len(pps) > 0 {
 			if self.CodecData, err = h264parser.NewCodecDataFromSPSAndPPS(sps, pps); err != nil {
 				return
+			}
+			if vcd, ok := self.CodecData.(h264parser.CodecData); ok {
+				vcd.TimeScale_ = tsio.PTS_HZ
+				self.CodecData = vcd
 			}
 		}
 	}
@@ -301,7 +324,7 @@ func (self *Stream) handleTSPacket(start bool, iskeyframe bool, payload []byte) 
 			return
 		}
 		var hdrlen int
-		if hdrlen, _, self.datalen, self.pts, self.dts, err = tsio.ParsePESHeader(payload); err != nil {
+		if hdrlen, _, self.datalen, self.pts, self.dts, self.ptsTS, self.dtsTS, err = tsio.ParsePESHeader(payload); err != nil {
 			return
 		}
 		self.iskeyframe = iskeyframe

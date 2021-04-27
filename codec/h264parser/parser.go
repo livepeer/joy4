@@ -880,10 +880,15 @@ type CodecData struct {
 	Record     []byte
 	RecordInfo AVCDecoderConfRecord
 	SPSInfo    SPSInfo
+	TimeScale_ uint32
 }
 
 func (self CodecData) Type() av.CodecType {
 	return av.H264
+}
+
+func (self CodecData) TimeScale() uint32 {
+	return self.TimeScale_
 }
 
 func (self CodecData) AVCDecoderConfRecordBytes() []byte {

@@ -20,8 +20,9 @@ type Stream struct {
 	tsw *tsio.TSWriter
 	idx int
 
-	iskeyframe bool
-	pts, dts   time.Duration
-	data       []byte
-	datalen    int
+	iskeyframe   bool
+	pts, dts     time.Duration
+	ptsTS, dtsTS int64
+	data         []byte
+	datalen      int
 }

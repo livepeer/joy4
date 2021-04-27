@@ -89,10 +89,18 @@ func (self *Demuxer) probe() (err error) {
 			if stream.CodecData, err = h264parser.NewCodecDataFromAVCDecoderConfRecord(avc1.Data); err != nil {
 				return
 			}
+			if vcd, ok := stream.CodecData.(h264parser.CodecData); ok {
+				vcd.TimeScale_ = uint32(stream.timeScale)
+				stream.CodecData = vcd
+			}
 			self.streams = append(self.streams, stream)
 		} else if esds := atrack.GetElemStreamDesc(); esds != nil {
 			if stream.CodecData, err = aacparser.NewCodecDataFromMPEG4AudioConfigBytes(esds.DecConfig); err != nil {
 				return
+			}
+			if acd, ok := stream.CodecData.(aacparser.CodecData); ok {
+				acd.TimeScale_ = uint32(stream.timeScale)
+				stream.CodecData = acd
 			}
 			self.streams = append(self.streams, stream)
 		}
@@ -324,7 +332,7 @@ func (self *Demuxer) ReadPacket() (pkt av.Packet, err error) {
 	}
 	pkt.Time = tm
 	pkt.TimeScale = chosen.timeScale
-	pkt.TimeB = dts
+	pkt.TimeTS = dts
 	pkt.Idx = int8(chosenidx)
 	return
 }
@@ -389,7 +397,7 @@ func (self *Stream) readPacket() (pkt av.Packet, err error) {
 	//println("pts/dts", self.ptsEntryIndex, self.dtsEntryIndex)
 	if self.sample.CompositionOffset != nil && len(self.sample.CompositionOffset.Entries) > 0 {
 		cts := int64(self.sample.CompositionOffset.Entries[self.cttsEntryIndex].Offset)
-		pkt.CompositionTimeB = cts
+		pkt.CompositionTimeTS = cts
 		pkt.CompositionTime = self.tsToTime(cts)
 	}
 

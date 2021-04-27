@@ -397,6 +397,18 @@ func TimeToTs(tm time.Duration) (v uint64) {
 	return
 }
 
+func TimeScaleTimeToTs(timeScale, tm int64) (v uint64) {
+	ts := uint64(tm * PTS_HZ / timeScale)
+	// 0010	PTS 32..30 1	PTS 29..15 1 PTS 14..00 1
+	v = ((ts>>30)&0x7)<<33 | ((ts>>15)&0x7fff)<<17 | (ts&0x7fff)<<1 | 0x100010001
+	return
+}
+
+func TsToInt(v uint64) uint64 {
+	// 0010	PTS 32..30 1	PTS 29..15 1 PTS 14..00 1
+	return (((v >> 33) & 0x7) << 30) | (((v >> 17) & 0x7fff) << 15) | ((v >> 1) & 0x7fff)
+}
+
 func TsToTime(v uint64) (tm time.Duration) {
 	// 0010	PTS 32..30 1	PTS 29..15 1 PTS 14..00 1
 	ts := (((v >> 33) & 0x7) << 30) | (((v >> 17) & 0x7fff) << 15) | ((v >> 1) & 0x7fff)
@@ -409,7 +421,7 @@ const (
 	PCR_HZ = 27000000
 )
 
-func ParsePESHeader(h []byte) (hdrlen int, streamid uint8, datalen int, pts, dts time.Duration, err error) {
+func ParsePESHeader(h []byte) (hdrlen int, streamid uint8, datalen int, pts, dts time.Duration, ptsTS, dtsTS int64, err error) {
 	if h[0] != 0 || h[1] != 0 || h[2] != 1 {
 		err = ErrPESHeader
 		return
@@ -432,20 +444,24 @@ func ParsePESHeader(h []byte) (hdrlen int, streamid uint8, datalen int, pts, dts
 			err = ErrPESHeader
 			return
 		}
-		pts = TsToTime(pio.U40BE(h[9:14]))
+		ptsTSRaw := pio.U40BE(h[9:14])
+		ptsTS = int64(TsToInt(ptsTSRaw))
+		pts = TsToTime(ptsTSRaw)
 		if flags&DTS != 0 {
 			if len(h) < 19 {
 				err = ErrPESHeader
 				return
 			}
-			dts = TsToTime(pio.U40BE(h[14:19]))
+			dtsTSRaw := pio.U40BE(h[14:19])
+			dtsTS = int64(TsToInt(dtsTSRaw))
+			dts = TsToTime(dtsTSRaw)
 		}
 	}
 
 	return
 }
 
-func FillPESHeader(h []byte, streamid uint8, datalen int, pts, dts time.Duration) (n int) {
+func FillPESHeader(h []byte, streamid uint8, datalen int, pts, dts time.Duration, timeScale, ptsTS, dtsTS int64) (n int) {
 	h[0] = 0
 	h[1] = 0
 	h[2] = 1
@@ -487,10 +503,19 @@ func FillPESHeader(h []byte, streamid uint8, datalen int, pts, dts time.Duration
 	// dts(40)?
 	if flags&PTS != 0 {
 		if flags&DTS != 0 {
-			pio.PutU40BE(h[9:14], TimeToTs(pts)|3<<36)
-			pio.PutU40BE(h[14:19], TimeToTs(dts)|1<<36)
+			if timeScale > 0 {
+				pio.PutU40BE(h[9:14], TimeScaleTimeToTs(timeScale, ptsTS)|3<<36)
+				pio.PutU40BE(h[14:19], TimeScaleTimeToTs(timeScale, dtsTS)|1<<36)
+			} else {
+				pio.PutU40BE(h[9:14], TimeToTs(pts)|3<<36)
+				pio.PutU40BE(h[14:19], TimeToTs(dts)|1<<36)
+			}
 		} else {
-			pio.PutU40BE(h[9:14], TimeToTs(pts)|2<<36)
+			if timeScale > 0 {
+				pio.PutU40BE(h[9:14], TimeScaleTimeToTs(timeScale, ptsTS)|2<<36)
+			} else {
+				pio.PutU40BE(h[9:14], TimeToTs(pts)|2<<36)
+			}
 		}
 	}
 

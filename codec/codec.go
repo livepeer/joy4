@@ -1,6 +1,7 @@
 package codec
 
 import (
+	"errors"
 	"time"
 
 	"github.com/livepeer/joy4/av"
@@ -13,6 +14,10 @@ type PCMUCodecData struct {
 
 func (self PCMUCodecData) Type() av.CodecType {
 	return self.typ
+}
+
+func (self PCMUCodecData) TimeScale() uint32 {
+	panic(errors.New("not implemented"))
 }
 
 func (self PCMUCodecData) SampleRate() int {

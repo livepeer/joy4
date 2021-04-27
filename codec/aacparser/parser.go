@@ -268,10 +268,15 @@ func WriteMPEG4AudioConfig(w io.Writer, config MPEG4AudioConfig) (err error) {
 type CodecData struct {
 	ConfigBytes []byte
 	Config      MPEG4AudioConfig
+	TimeScale_  uint32
 }
 
 func (self CodecData) Type() av.CodecType {
 	return av.AAC
+}
+
+func (self CodecData) TimeScale() uint32 {
+	return self.TimeScale_
 }
 
 func (self CodecData) MPEG4AudioConfigBytes() []byte {
