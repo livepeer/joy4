@@ -401,8 +401,13 @@ func TimeToTs(tm time.Duration) (v uint64) {
 }
 
 func TimeScaleTimeToTs(timeScale, tm int64) (v uint64) {
-	hi, lo := bits.Mul64(uint64(tm), uint64(timeScale))
-	ts, _ := bits.Div64(hi, lo, uint64(time.Second))
+	if timeScale == PTS_HZ {
+		var tu uint64 = uint64(tm)
+		v = ((tu>>30)&0x7)<<33 | ((tu>>15)&0x7fff)<<17 | (tu&0x7fff)<<1 | 0x100010001
+		return
+	}
+	hi, lo := bits.Mul64(uint64(tm), PTS_HZ)
+	ts, _ := bits.Div64(hi, lo, uint64(timeScale))
 	// 0010	PTS 32..30 1	PTS 29..15 1 PTS 14..00 1
 	v = ((ts>>30)&0x7)<<33 | ((ts>>15)&0x7fff)<<17 | (ts&0x7fff)<<1 | 0x100010001
 	return
