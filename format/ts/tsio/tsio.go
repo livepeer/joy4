@@ -470,7 +470,7 @@ func ParsePESHeader(h []byte) (hdrlen int, streamid uint8, datalen int, pts, dts
 	return
 }
 
-func FillPESHeader(h []byte, streamid uint8, datalen int, pts, dts time.Duration, timeScale, ptsTS, dtsTS int64) (n int) {
+func FillPESHeader(h []byte, streamid uint8, datalen int, pts, dts time.Duration, timeScale, ptsTS, dtsTS int64, forceDts bool) (n int) {
 	h[0] = 0
 	h[1] = 0
 	h[2] = 1
@@ -482,7 +482,7 @@ func FillPESHeader(h []byte, streamid uint8, datalen int, pts, dts time.Duration
 	var flags uint8
 	if pts != 0 {
 		flags |= PTS
-		if dts != 0 {
+		if dts != 0 || forceDts {
 			flags |= DTS
 		}
 	}
