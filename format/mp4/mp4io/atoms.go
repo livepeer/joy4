@@ -3531,9 +3531,9 @@ func (self TrackFragHeader) Children() (r []Atom) {
 }
 
 type TrackFragDecodeTime struct {
-	Version uint8
-	Flags   uint32
-	Time    time.Time
+	Version             uint8
+	Flags               uint32
+	BaseMediaDecodeTime uint64
 	AtomPos
 }
 
@@ -3549,11 +3549,10 @@ func (self TrackFragDecodeTime) marshal(b []byte) (n int) {
 	pio.PutU24BE(b[n:], self.Flags)
 	n += 3
 	if self.Version != 0 {
-		PutTime64(b[n:], self.Time)
+		pio.PutU64BE(b[n:], self.BaseMediaDecodeTime)
 		n += 8
 	} else {
-
-		PutTime32(b[n:], self.Time)
+		pio.PutU32BE(b[n:], uint32(self.BaseMediaDecodeTime))
 		n += 4
 	}
 	return
@@ -3586,11 +3585,10 @@ func (self *TrackFragDecodeTime) Unmarshal(b []byte, offset int) (n int, err err
 	self.Flags = pio.U24BE(b[n:])
 	n += 3
 	if self.Version != 0 {
-		self.Time = GetTime64(b[n:])
+		self.BaseMediaDecodeTime = pio.U64BE(b[n:])
 		n += 8
 	} else {
-
-		self.Time = GetTime32(b[n:])
+		self.BaseMediaDecodeTime = uint64(pio.U32BE(b[n:]))
 		n += 4
 	}
 	return
