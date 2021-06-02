@@ -1,27 +1,28 @@
 package mp4
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"time"
+
 	"github.com/livepeer/joy4/av"
 	"github.com/livepeer/joy4/codec/aacparser"
 	"github.com/livepeer/joy4/codec/h264parser"
 	"github.com/livepeer/joy4/format/mp4/mp4io"
 	"github.com/livepeer/joy4/utils/bits/pio"
-	"io"
-	"bufio"
 )
 
 type Muxer struct {
-	w          io.WriteSeeker
-	bufw       *bufio.Writer
-	wpos       int64
-	streams    []*Stream
+	w       io.WriteSeeker
+	bufw    *bufio.Writer
+	wpos    int64
+	streams []*Stream
 }
 
 func NewMuxer(w io.WriteSeeker) *Muxer {
 	return &Muxer{
-		w: w,
+		w:    w,
 		bufw: bufio.NewWriterSize(w, pio.RecommendBufioSize),
 	}
 }
@@ -54,7 +55,7 @@ func (self *Muxer) newStream(codec av.CodecData) (err error) {
 
 	stream.trackAtom = &mp4io.Track{
 		Header: &mp4io.TrackHeader{
-			TrackId:  int32(len(self.streams)+1),
+			TrackId:  int32(len(self.streams) + 1),
 			Flags:    0x0003, // Track enabled | Track in movie
 			Duration: 0,      // fill later
 			Matrix:   [9]int32{0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000},
@@ -81,9 +82,17 @@ func (self *Muxer) newStream(codec av.CodecData) (err error) {
 	switch codec.Type() {
 	case av.H264:
 		stream.sample.SyncSample = &mp4io.SyncSample{}
+		stream.timeScale = 90000
+	case av.AAC:
+		if codec.TimeScale() > 0 {
+			stream.timeScale = int64(codec.TimeScale())
+		} else {
+			stream.timeScale = 90000
+		}
+	default:
+		stream.timeScale = 90000
 	}
 
-	stream.timeScale = 90000
 	stream.muxer = self
 	self.streams = append(self.streams, stream)
 
@@ -92,7 +101,7 @@ func (self *Muxer) newStream(codec av.CodecData) (err error) {
 
 func (self *Stream) fillTrackAtom() (err error) {
 	self.trackAtom.Media.Header.TimeScale = int32(self.timeScale)
-	self.trackAtom.Media.Header.Duration = int32(self.duration)
+	self.trackAtom.Media.Header.Duration = uint64(self.duration)
 
 	if self.Type() == av.H264 {
 		codec := self.CodecData.(h264parser.CodecData)
@@ -109,7 +118,7 @@ func (self *Stream) fillTrackAtom() (err error) {
 			Conf:                 &mp4io.AVC1Conf{Data: codec.AVCDecoderConfRecordBytes()},
 		}
 		self.trackAtom.Media.Handler = &mp4io.HandlerRefer{
-			SubType: [4]byte{'v','i','d','e'},
+			SubType: [4]byte{'v', 'i', 'd', 'e'},
 			Name:    []byte("Video Media Handler"),
 		}
 		self.trackAtom.Media.Info.Video = &mp4io.VideoMediaInfo{
@@ -132,7 +141,7 @@ func (self *Stream) fillTrackAtom() (err error) {
 		self.trackAtom.Header.Volume = 1
 		self.trackAtom.Header.AlternateGroup = 1
 		self.trackAtom.Media.Handler = &mp4io.HandlerRefer{
-			SubType: [4]byte{'s','o','u','n'},
+			SubType: [4]byte{'s', 'o', 'u', 'n'},
 			Name:    []byte("Sound Handler"),
 		}
 		self.trackAtom.Media.Info.Sound = &mp4io.SoundMediaInfo{}
@@ -170,7 +179,10 @@ func (self *Muxer) WriteHeader(streams []av.CodecData) (err error) {
 func (self *Muxer) WritePacket(pkt av.Packet) (err error) {
 	stream := self.streams[pkt.Idx]
 	if stream.lastpkt != nil {
-		if err = stream.writePacket(*stream.lastpkt, pkt.Time-stream.lastpkt.Time); err != nil {
+		if stream.lastpkt.TimeScale != pkt.TimeScale {
+			panic("mixing packets from different sources not implemented")
+		}
+		if err = stream.writePacket(*stream.lastpkt, pkt.Time-stream.lastpkt.Time, pkt.TimeTS-stream.lastpkt.TimeTS); err != nil {
 			return
 		}
 	}
@@ -178,7 +190,7 @@ func (self *Muxer) WritePacket(pkt av.Packet) (err error) {
 	return
 }
 
-func (self *Stream) writePacket(pkt av.Packet, rawdur time.Duration) (err error) {
+func (self *Stream) writePacket(pkt av.Packet, rawdur time.Duration, timeScaleDuration int64) (err error) {
 	if rawdur < 0 {
 		err = fmt.Errorf("mp4: stream#%d time=%v < lasttime=%v", pkt.Idx, pkt.Time, self.lastpkt.Time)
 		return
@@ -192,7 +204,12 @@ func (self *Stream) writePacket(pkt av.Packet, rawdur time.Duration) (err error)
 		self.sample.SyncSample.Entries = append(self.sample.SyncSample.Entries, uint32(self.sampleIndex+1))
 	}
 
-	duration := uint32(self.timeToTs(rawdur))
+	var duration uint32
+	if pkt.TimeScale > 0 {
+		duration = uint32(self.timeScaleTimeToTs(pkt.TimeScale, timeScaleDuration))
+	} else {
+		duration = uint32(self.timeToTs(rawdur))
+	}
 	if self.sttsEntry == nil || duration != self.sttsEntry.Duration {
 		self.sample.TimeToSample.Entries = append(self.sample.TimeToSample.Entries, mp4io.TimeToSampleEntry{Duration: duration})
 		self.sttsEntry = &self.sample.TimeToSample.Entries[len(self.sample.TimeToSample.Entries)-1]
@@ -200,7 +217,13 @@ func (self *Stream) writePacket(pkt av.Packet, rawdur time.Duration) (err error)
 	self.sttsEntry.Count++
 
 	if self.sample.CompositionOffset != nil {
-		offset := uint32(self.timeToTs(pkt.CompositionTime))
+		var offset uint32
+		if pkt.TimeScale > 0 {
+			offset = uint32(self.timeScaleTimeToTs(pkt.TimeScale, pkt.CompositionTimeTS))
+		} else {
+			offset = uint32(self.timeToTs(pkt.CompositionTime))
+		}
+
 		if self.cttsEntry == nil || offset != self.cttsEntry.Offset {
 			table := self.sample.CompositionOffset
 			table.Entries = append(table.Entries, mp4io.CompositionOffsetEntry{Offset: offset})
@@ -211,7 +234,7 @@ func (self *Stream) writePacket(pkt av.Packet, rawdur time.Duration) (err error)
 
 	self.duration += int64(duration)
 	self.sampleIndex++
-	self.sample.ChunkOffset.Entries = append(self.sample.ChunkOffset.Entries, uint32(self.muxer.wpos))
+	self.sample.ChunkOffset.Entries = append(self.sample.ChunkOffset.Entries, uint64(self.muxer.wpos))
 	self.sample.SampleSize.Entries = append(self.sample.SampleSize.Entries, uint32(len(pkt.Data)))
 
 	self.muxer.wpos += int64(len(pkt.Data))
@@ -221,7 +244,7 @@ func (self *Stream) writePacket(pkt av.Packet, rawdur time.Duration) (err error)
 func (self *Muxer) WriteTrailer() (err error) {
 	for _, stream := range self.streams {
 		if stream.lastpkt != nil {
-			if err = stream.writePacket(*stream.lastpkt, 0); err != nil {
+			if err = stream.writePacket(*stream.lastpkt, 0, 0); err != nil {
 				return
 			}
 			stream.lastpkt = nil

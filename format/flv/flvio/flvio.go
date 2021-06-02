@@ -2,10 +2,11 @@ package flvio
 
 import (
 	"fmt"
-	"github.com/livepeer/joy4/utils/bits/pio"
-	"github.com/livepeer/joy4/av"
 	"io"
 	"time"
+
+	"github.com/livepeer/joy4/av"
+	"github.com/livepeer/joy4/utils/bits/pio"
 )
 
 func TsToTime(ts int32) time.Duration {
@@ -13,7 +14,9 @@ func TsToTime(ts int32) time.Duration {
 }
 
 func TimeToTs(tm time.Duration) int32 {
-	return int32(tm / time.Millisecond)
+	// round up - match ffmpeg's behaviour
+	r := (tm + time.Millisecond - 1) / time.Millisecond
+	return int32(r)
 }
 
 const MaxTagSubHeaderLength = 16

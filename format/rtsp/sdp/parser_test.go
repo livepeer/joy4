@@ -2,11 +2,15 @@ package sdp
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestParse(t *testing.T) {
-	infos := Decode(`
+	assert := assert.New(t)
+	sess, medias := Parse(`
 v=0
+u=rtsp://some.test/
 o=- 1459325504777324 1 IN IP4 192.168.0.123
 s=RTSP/RTP stream from Network Video Server
 i=mpeg4cif
@@ -40,5 +44,10 @@ a=rtpmap:0 PCMU/8000
 a=Media_header:MEDIAINFO=494D4B48010100000400010010710110401F000000FA000000000000000000000000000000000000;
 a=appversion:1.0
 `)
-	t.Logf("%v", infos)
+	t.Logf("%v", sess)
+	t.Logf("%v", medias)
+	assert.Len(medias, 3)
+	assert.Equal("rtsp://109.195.127.207:554/mpeg4cif/trackID=2", medias[2].Control)
+	assert.NotNil(sess)
+	assert.Equal("rtsp://some.test/", sess.Uri)
 }

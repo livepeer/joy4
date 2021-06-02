@@ -1,13 +1,48 @@
 package bits
 
 import (
+	"fmt"
 	"io"
 )
 
+// NapToRbsp ...
+func NapToRbsp(nal []byte) []byte {
+	rbsp := make([]byte, 0, len(nal))
+	zeroCount := 0
+	for _, b := range nal {
+		if zeroCount == 2 && b == 0x3 {
+			zeroCount = 0
+			continue
+		}
+		rbsp = append(rbsp, b)
+		if b == 0 {
+			zeroCount++
+		} else {
+			zeroCount = 0
+		}
+	}
+	return rbsp
+}
+
 type GolombBitReader struct {
-	R    io.Reader
-	buf  [1]byte
-	left byte
+	R      io.Reader
+	buf    [1]byte
+	left   byte
+	pos    int
+	Debug  bool
+	Debug2 bool
+}
+
+func (self *GolombBitReader) Pos() int {
+	return self.pos
+}
+
+func (self *GolombBitReader) Left() byte {
+	return self.left
+}
+
+func (self *GolombBitReader) CurByte() byte {
+	return self.buf[0]
 }
 
 func (self *GolombBitReader) ReadBit() (res uint, err error) {
@@ -15,6 +50,10 @@ func (self *GolombBitReader) ReadBit() (res uint, err error) {
 		if _, err = self.R.Read(self.buf[:]); err != nil {
 			return
 		}
+		if self.Debug {
+			fmt.Printf("got %2x at pos %d\n", self.buf[0], self.pos)
+		}
+		self.pos++
 		self.left = 8
 	}
 	self.left--
@@ -28,7 +67,14 @@ func (self *GolombBitReader) ReadBits(n int) (res uint, err error) {
 		if bit, err = self.ReadBit(); err != nil {
 			return
 		}
+		if self.Debug2 {
+			fmt.Printf("i %2d ind %2d bit %d ", i, n-i-1, bit)
+
+		}
 		res |= bit << uint(n-i-1)
+	}
+	if self.Debug2 {
+		fmt.Printf(" res = %x\n", res)
 	}
 	return
 }

@@ -2,12 +2,12 @@ package ts
 
 import (
 	"fmt"
+	"io"
+
 	"github.com/livepeer/joy4/av"
 	"github.com/livepeer/joy4/codec/aacparser"
 	"github.com/livepeer/joy4/codec/h264parser"
 	"github.com/livepeer/joy4/format/ts/tsio"
-	"io"
-	"time"
 )
 
 var CodecTypes = []av.CodecType{av.H264, av.AAC}
@@ -154,13 +154,13 @@ func (self *Muxer) WriteHeader(streams []av.CodecData) (err error) {
 
 func (self *Muxer) WritePacket(pkt av.Packet) (err error) {
 	stream := self.streams[pkt.Idx]
-	pkt.Time += time.Second
 
 	switch stream.Type() {
 	case av.AAC:
 		codec := stream.CodecData.(aacparser.CodecData)
 
-		n := tsio.FillPESHeader(self.peshdr, tsio.StreamIdAAC, len(self.adtshdr)+len(pkt.Data), pkt.Time, 0)
+		n := tsio.FillPESHeader(self.peshdr, tsio.StreamIdAAC, len(self.adtshdr)+len(pkt.Data), pkt.Time, 0,
+			pkt.TimeScale, pkt.TimeTS, 0, false)
 		self.datav[0] = self.peshdr[:n]
 		aacparser.FillADTSHeader(self.adtshdr, codec.Config, 1024, len(pkt.Data))
 		self.datav[1] = self.adtshdr
@@ -193,7 +193,9 @@ func (self *Muxer) WritePacket(pkt av.Packet) (err error) {
 			datav = append(datav, nalu)
 		}
 
-		n := tsio.FillPESHeader(self.peshdr, tsio.StreamIdH264, -1, pkt.Time+pkt.CompositionTime, pkt.Time)
+		n := tsio.FillPESHeader(self.peshdr, tsio.StreamIdH264, -1,
+			pkt.Time+pkt.CompositionTime, pkt.Time, pkt.TimeScale, pkt.TimeTS+pkt.CompositionTimeTS,
+			pkt.TimeTS, true)
 		datav[0] = self.peshdr[:n]
 
 		if err = stream.tsw.WritePackets(self.w, datav, pkt.Time, pkt.IsKeyFrame, false); err != nil {

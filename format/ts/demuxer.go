@@ -3,17 +3,20 @@ package ts
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"time"
-	"github.com/livepeer/joy4/utils/bits/pio"
+
 	"github.com/livepeer/joy4/av"
-	"github.com/livepeer/joy4/format/ts/tsio"
 	"github.com/livepeer/joy4/codec/aacparser"
 	"github.com/livepeer/joy4/codec/h264parser"
-	"io"
+	"github.com/livepeer/joy4/format/ts/tsio"
+	"github.com/livepeer/joy4/jerrors"
+	"github.com/livepeer/joy4/utils/bits/pio"
 )
 
 type Demuxer struct {
-	r *bufio.Reader
+	NumStreamsToFind int
+	r                *bufio.Reader
 
 	pkts []av.Packet
 
@@ -27,13 +30,33 @@ type Demuxer struct {
 
 func NewDemuxer(r io.Reader) *Demuxer {
 	return &Demuxer{
-		tshdr: make([]byte, 188),
-		r: bufio.NewReaderSize(r, pio.RecommendBufioSize),
+		NumStreamsToFind: 2,
+		tshdr:            make([]byte, 188),
+		r:                bufio.NewReaderSize(r, pio.RecommendBufioSize),
 	}
 }
 
 func (self *Demuxer) Streams() (streams []av.CodecData, err error) {
 	if err = self.probe(); err != nil {
+		if err == io.EOF {
+			var videoCodecFound, audioCodecFound bool
+			for _, stream := range self.streams {
+				if stream.CodecData != nil {
+					if stream.CodecData.Type().IsVideo() {
+						videoCodecFound = true
+					}
+					if stream.CodecData.Type().IsAudio() {
+						audioCodecFound = true
+					}
+				}
+			}
+			if !audioCodecFound {
+				err = jerrors.ErrNoAudioInfoFound
+			}
+			if !videoCodecFound {
+				err = jerrors.ErrNoVideoInfoFound
+			}
+		}
 		return
 	}
 	for _, stream := range self.streams {
@@ -52,9 +75,12 @@ func (self *Demuxer) probe() (err error) {
 						n++
 					}
 				}
-				if n == len(self.streams) {
+				if n == self.NumStreamsToFind {
 					break
 				}
+				// if n == len(self.streams) {
+				// 	break
+				// }
 			}
 			if err = self.poll(); err != nil {
 				return
@@ -101,7 +127,7 @@ func (self *Demuxer) initPMT(payload []byte) (err error) {
 		return
 	}
 	self.pmt = &tsio.PMT{}
-	if _, err = self.pmt.Unmarshal(payload[psihdrlen:psihdrlen+datalen]); err != nil {
+	if _, err = self.pmt.Unmarshal(payload[psihdrlen : psihdrlen+datalen]); err != nil {
 		return
 	}
 
@@ -116,6 +142,8 @@ func (self *Demuxer) initPMT(payload []byte) (err error) {
 		case tsio.ElementaryStreamTypeH264:
 			self.streams = append(self.streams, stream)
 		case tsio.ElementaryStreamTypeAdtsAAC:
+			self.streams = append(self.streams, stream)
+		default:
 			self.streams = append(self.streams, stream)
 		}
 	}
@@ -156,7 +184,7 @@ func (self *Demuxer) readTSPacket() (err error) {
 				return
 			}
 			self.pat = &tsio.PAT{}
-			if _, err = self.pat.Unmarshal(payload[psihdrlen:psihdrlen+datalen]); err != nil {
+			if _, err = self.pat.Unmarshal(payload[psihdrlen : psihdrlen+datalen]); err != nil {
 				return
 			}
 		}
@@ -183,22 +211,32 @@ func (self *Demuxer) readTSPacket() (err error) {
 	return
 }
 
-func (self *Stream) addPacket(payload []byte, timedelta time.Duration) {
+func (self *Stream) addPacket(payload []byte, timedelta time.Duration, timeDeltaTS int64) {
 	dts := self.dts
 	pts := self.pts
+	dtsTS := self.dtsTS
+	ptsTS := self.ptsTS
 	if dts == 0 {
 		dts = pts
+	}
+	if dtsTS == 0 {
+		dtsTS = ptsTS
 	}
 
 	demuxer := self.demuxer
 	pkt := av.Packet{
-		Idx: int8(self.idx),
+		Idx:        int8(self.idx),
 		IsKeyFrame: self.iskeyframe,
-		Time: dts+timedelta,
-		Data: payload,
+		Time:       dts + timedelta,
+		TimeTS:     dtsTS + timeDeltaTS,
+		TimeScale:  tsio.PTS_HZ,
+		Data:       payload,
 	}
 	if pts != dts {
-		pkt.CompositionTime = pts-dts
+		pkt.CompositionTime = pts - dts
+	}
+	if ptsTS != dtsTS {
+		pkt.CompositionTimeTS = ptsTS - dtsTS
 	}
 	demuxer.pkts = append(demuxer.pkts, pkt)
 }
@@ -219,6 +257,7 @@ func (self *Stream) payloadEnd() (n int, err error) {
 		var config aacparser.MPEG4AudioConfig
 
 		delta := time.Duration(0)
+		var deltaTS int64
 		for len(payload) > 0 {
 			var hdrlen, framelen, samples int
 			if config, hdrlen, framelen, samples, err = aacparser.ParseADTSHeader(payload); err != nil {
@@ -228,10 +267,18 @@ func (self *Stream) payloadEnd() (n int, err error) {
 				if self.CodecData, err = aacparser.NewCodecDataFromMPEG4AudioConfig(config); err != nil {
 					return
 				}
+				if acd, ok := self.CodecData.(aacparser.CodecData); ok {
+					acd.TimeScale_ = tsio.PTS_HZ
+					self.CodecData = acd
+				}
 			}
-			self.addPacket(payload[hdrlen:framelen], delta)
+			self.addPacket(payload[hdrlen:framelen], delta, deltaTS)
 			n++
 			delta += time.Duration(samples) * time.Second / time.Duration(config.SampleRate)
+			deltaTS += int64(samples) * tsio.PTS_HZ / int64(config.SampleRate)
+			if false {
+				fmt.Printf("deltaTS %d samples %d sample rate %d delta %d\n", deltaTS, samples, config.SampleRate, delta)
+			}
 			payload = payload[framelen:]
 		}
 
@@ -251,7 +298,7 @@ func (self *Stream) payloadEnd() (n int, err error) {
 					b := make([]byte, 4+len(nalu))
 					pio.PutU32BE(b[0:4], uint32(len(nalu)))
 					copy(b[4:], nalu)
-					self.addPacket(b, time.Duration(0))
+					self.addPacket(b, time.Duration(0), 0)
 					n++
 				}
 			}
@@ -260,6 +307,10 @@ func (self *Stream) payloadEnd() (n int, err error) {
 		if self.CodecData == nil && len(sps) > 0 && len(pps) > 0 {
 			if self.CodecData, err = h264parser.NewCodecDataFromSPSAndPPS(sps, pps); err != nil {
 				return
+			}
+			if vcd, ok := self.CodecData.(h264parser.CodecData); ok {
+				vcd.TimeScale_ = tsio.PTS_HZ
+				self.CodecData = vcd
 			}
 		}
 	}
@@ -273,7 +324,7 @@ func (self *Stream) handleTSPacket(start bool, iskeyframe bool, payload []byte) 
 			return
 		}
 		var hdrlen int
-		if hdrlen, _, self.datalen, self.pts, self.dts, err = tsio.ParsePESHeader(payload); err != nil {
+		if hdrlen, _, self.datalen, self.pts, self.dts, self.ptsTS, self.dtsTS, err = tsio.ParsePESHeader(payload); err != nil {
 			return
 		}
 		self.iskeyframe = iskeyframe

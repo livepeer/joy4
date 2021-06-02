@@ -5,14 +5,19 @@ import (
 )
 
 type CodecData struct {
-	CodecType_ av.CodecType
-	SampleRate_ int
-	SampleFormat_ av.SampleFormat
+	CodecType_     av.CodecType
+	SampleRate_    int
+	SampleFormat_  av.SampleFormat
 	ChannelLayout_ av.ChannelLayout
+	TimeScale_     uint32
 }
 
 func (self CodecData) Type() av.CodecType {
 	return self.CodecType_
+}
+
+func (self CodecData) TimeScale() uint32 {
+	return self.TimeScale_
 }
 
 func (self CodecData) SampleFormat() av.SampleFormat {
@@ -26,4 +31,3 @@ func (self CodecData) ChannelLayout() av.ChannelLayout {
 func (self CodecData) SampleRate() int {
 	return self.SampleRate_
 }
-

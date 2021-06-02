@@ -3,7 +3,8 @@ package flv
 import (
 	"bufio"
 	"fmt"
-	"github.com/livepeer/joy4/utils/bits/pio"
+	"io"
+
 	"github.com/livepeer/joy4/av"
 	"github.com/livepeer/joy4/av/avutil"
 	"github.com/livepeer/joy4/codec"
@@ -11,10 +12,10 @@ import (
 	"github.com/livepeer/joy4/codec/fake"
 	"github.com/livepeer/joy4/codec/h264parser"
 	"github.com/livepeer/joy4/format/flv/flvio"
-	"io"
+	"github.com/livepeer/joy4/utils/bits/pio"
 )
 
-var MaxProbePacketCount = 20
+var MaxProbePacketCount = 200
 
 func NewMetadataByStreams(streams []av.CodecData) (metadata flvio.AMFMap, err error) {
 	metadata = flvio.AMFMap{}
@@ -105,7 +106,7 @@ func (self *Prober) PushTag(tag flvio.Tag, timestamp int32) (err error) {
 		case flvio.SOUND_AAC:
 			switch tag.AACPacketType {
 			case flvio.AAC_SEQHDR:
-				if !self.GotAudio {
+				if !self.GotAudio && len(tag.Data) > 0 {
 					var stream aacparser.CodecData
 					if stream, err = aacparser.NewCodecDataFromMPEG4AudioConfigBytes(tag.Data); err != nil {
 						err = fmt.Errorf("flv: aac seqhdr invalid")
@@ -155,7 +156,7 @@ func (self *Prober) Probed() (ok bool) {
 			return true
 		}
 	} else {
-		if self.PushedCount == MaxProbePacketCount {
+		if self.PushedCount == MaxProbePacketCount || self.GotAudio && self.GotVideo {
 			return true
 		}
 	}

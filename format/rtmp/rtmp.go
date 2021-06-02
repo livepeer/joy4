@@ -8,16 +8,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/livepeer/joy4/utils/bits/pio"
-	"github.com/livepeer/joy4/av"
-	"github.com/livepeer/joy4/av/avutil"
-	"github.com/livepeer/joy4/format/flv"
-	"github.com/livepeer/joy4/format/flv/flvio"
 	"io"
 	"net"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/livepeer/joy4/av"
+	"github.com/livepeer/joy4/av/avutil"
+	"github.com/livepeer/joy4/format/flv"
+	"github.com/livepeer/joy4/format/flv/flvio"
+	"github.com/livepeer/joy4/utils/bits/pio"
 )
 
 // Debug enables debug output
@@ -288,14 +289,28 @@ func (self *Conn) pollCommand() (err error) {
 	}
 }
 
-func (self *Conn) pollAVTag() (tag flvio.Tag, err error) {
+func (self *Conn) pollAVTag() (flvio.Tag, error) {
+	for {
+		if tagref, err := self.pollAVTagOrDataMsg(); err != nil || tagref != nil {
+			var tag flvio.Tag
+			if tagref != nil {
+				tag = *tagref
+			}
+			return tag, err
+		}
+	}
+}
+
+func (self *Conn) pollAVTagOrDataMsg() (tag *flvio.Tag, err error) {
 	for {
 		if err = self.pollMsg(); err != nil {
 			return
 		}
 		switch self.msgtypeid {
 		case msgtypeidVideoMsg, msgtypeidAudioMsg:
-			tag = self.avtag
+			tag = &self.avtag
+			return
+		case msgtypeidDataMsgAMF0:
 			return
 		}
 	}
@@ -588,11 +603,30 @@ func (self *Conn) checkCreateStreamResult() (ok bool, avmsgsid uint32) {
 
 func (self *Conn) probe() (err error) {
 	for !self.prober.Probed() {
-		var tag flvio.Tag
-		if tag, err = self.pollAVTag(); err != nil {
+		var tag *flvio.Tag
+		if tag, err = self.pollAVTagOrDataMsg(); err != nil {
 			return
 		}
-		if err = self.prober.PushTag(tag, int32(self.timestamp)); err != nil {
+		if tag == nil {
+			onMetaDataFound := false
+			for _, val := range self.datamsgvals {
+				if onMetaDataFound {
+					vMap, ok := val.(flvio.AMFMap)
+					if vMap == nil || !ok {
+						break
+					}
+					if _, has := vMap["audiocodecid"]; has {
+						self.prober.HasAudio = true
+					}
+					if _, has := vMap["videocodecid"]; has {
+						self.prober.HasVideo = true
+					}
+					break
+				} else if vs, ok := val.(string); ok && vs == "onMetaData" {
+					onMetaDataFound = true
+				}
+			}
+		} else if err = self.prober.PushTag(*tag, int32(self.timestamp)); err != nil {
 			return
 		}
 	}

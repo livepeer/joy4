@@ -4,9 +4,10 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"github.com/livepeer/joy4/av"
 	"strconv"
 	"strings"
+
+	"github.com/livepeer/joy4/av"
 )
 
 type Session struct {

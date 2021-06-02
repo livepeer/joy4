@@ -1,12 +1,12 @@
-
 package h264parser
 
 import (
+	"bytes"
+	"fmt"
+
 	"github.com/livepeer/joy4/av"
 	"github.com/livepeer/joy4/utils/bits"
 	"github.com/livepeer/joy4/utils/bits/pio"
-	"fmt"
-	"bytes"
 )
 
 const (
@@ -15,6 +15,8 @@ const (
 	NALU_SPS = 8
 	NALU_AUD = 9
 )
+
+var Debug bool
 
 func IsDataNALU(b []byte) bool {
 	typ := b[0] & 0x1f
@@ -131,7 +133,7 @@ Annex B is commonly used in live and streaming formats such as transport streams
 2. AVCC
 The other common method of storing an H.264 stream is the AVCC format. In this format, each NALU is preceded with its length (in big endian format). This method is easier to parse, but you lose the byte alignment features of Annex B. Just to complicate things, the length may be encoded using 1, 2 or 4 bytes. This value is stored in a header object. This header is often called ‘extradata’ or ‘sequence header’. Its basic format is as follows:
 
-bits    
+bits
 8   version ( always 0x01 )
 8   avc profile ( sps[0][1] )
 8   avc compatibility ( sps[0][2] )
@@ -199,8 +201,8 @@ Additionally, there is a new variable called NALULengthSizeMinusOne. This confus
 An advantage to this format is the ability to configure the decoder at the start and jump into the middle of a stream. This is a common use case where the media is available on a random access medium such as a hard drive, and is therefore used in common container formats such as MP4 and MKV.
 */
 
-var StartCodeBytes = []byte{0,0,1}
-var AUDBytes = []byte{0,0,0,1,0x9,0xf0,0,0,0,1} // AUD
+var StartCodeBytes = []byte{0, 0, 1}
+var AUDBytes = []byte{0, 0, 0, 1, 0x9, 0xf0, 0, 0, 0, 1} // AUD
 
 func CheckNALUsType(b []byte) (typ int) {
 	_, typ = SplitNALUs(b)
@@ -291,8 +293,10 @@ func SplitNALUs(b []byte) (nalus [][]byte, typ int) {
 }
 
 type SPSInfo struct {
-	ProfileIdc uint
-	LevelIdc   uint
+	ProfileIdc            uint
+	LevelIdc              uint
+	Log2MaxFrameNumMinus4 uint
+	FrameMbsOnlyFlag      uint
 
 	MbWidth  uint
 	MbHeight uint
@@ -304,10 +308,94 @@ type SPSInfo struct {
 
 	Width  uint
 	Height uint
+
+	NumUnitsInTick     uint
+	TimeScale          uint
+	FPS                float64
+	FixedFrameRateFlag uint
+}
+
+type Nalu5 struct {
+	FirstMbInSlice    uint
+	SliceType         uint
+	PicParameterSetID uint
+	FrameNum          uint
+	FieldPicFlag      uint
+	BottomFieldFlag   uint
+	IdrPicID          uint
+}
+
+func (n5 *Nalu5) String() string {
+	return fmt.Sprintf("first_mb_in_slice %d slice_type %d pic_parameter_set_id %d frame_num %d field_pic_flag %d bottom_field_flag %d idr_pic_id %d",
+		n5.FieldPicFlag, n5.SliceType, n5.PicParameterSetID, n5.FrameNum, n5.FieldPicFlag, n5.BottomFieldFlag, n5.IdrPicID)
+}
+
+func ParseNalu5(sps *SPSInfo, data []byte) (*Nalu5, error) {
+	n5 := &Nalu5{}
+
+	if len(data) <= 1 {
+		return nil, fmt.Errorf("h264parser: packet too short to parse slice header")
+	}
+
+	nal_unit_type := data[0] & 0x1f
+	switch nal_unit_type {
+	case 1, 2, 5, 19:
+		// slice_layer_without_partitioning_rbsp
+		// slice_data_partition_a_layer_rbsp
+
+	default:
+		return nil, fmt.Errorf("h264parser: nal_unit_type=%d has no slice header", nal_unit_type)
+	}
+
+	if Debug {
+		fmt.Printf("h264: Log2MaxFrameNumMinus4: %d nal_unit_type %d\n", sps.Log2MaxFrameNumMinus4, nal_unit_type)
+	}
+	rbsp := bits.NapToRbsp(data[1:])
+	r := &bits.GolombBitReader{R: bytes.NewReader(rbsp)}
+	var err error
+
+	// first_mb_in_slice
+	if n5.FirstMbInSlice, err = r.ReadExponentialGolombCode(); err != nil {
+		return nil, err
+	}
+
+	// slice_type
+	if n5.SliceType, err = r.ReadExponentialGolombCode(); err != nil {
+		return nil, err
+	}
+
+	if n5.PicParameterSetID, err = r.ReadExponentialGolombCode(); err != nil {
+		return nil, err
+	}
+
+	if n5.FrameNum, err = r.ReadBits(int(sps.Log2MaxFrameNumMinus4) + 4); err != nil {
+		return nil, err
+	}
+	if sps.FrameMbsOnlyFlag == 0 {
+		if n5.FieldPicFlag, err = r.ReadBit(); err != nil {
+			return nil, err
+		}
+		if n5.FieldPicFlag != 0 {
+			if n5.BottomFieldFlag, err = r.ReadBit(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if nal_unit_type == 5 {
+		if n5.IdrPicID, err = r.ReadExponentialGolombCode(); err != nil {
+			return nil, err
+		}
+	}
+
+	return n5, nil
 }
 
 func ParseSPS(data []byte) (self SPSInfo, err error) {
-	r := &bits.GolombBitReader{R: bytes.NewReader(data)}
+	// fmt.Printf("SPS:\n")
+	// fmt.Print(hex.Dump(data))
+	rbsp := bits.NapToRbsp(data)
+
+	r := &bits.GolombBitReader{R: bytes.NewReader(rbsp)}
 
 	if _, err = r.ReadBits(8); err != nil {
 		return
@@ -328,8 +416,12 @@ func ParseSPS(data []byte) (self SPSInfo, err error) {
 	}
 
 	// seq_parameter_set_id
-	if _, err = r.ReadExponentialGolombCode(); err != nil {
+	var seq_parameter_set_id uint
+	if seq_parameter_set_id, err = r.ReadExponentialGolombCode(); err != nil {
 		return
+	}
+	if Debug {
+		fmt.Printf("seq_parameter_set_id %d\n", seq_parameter_set_id)
 	}
 
 	if self.ProfileIdc == 100 || self.ProfileIdc == 110 ||
@@ -342,13 +434,18 @@ func ParseSPS(data []byte) (self SPSInfo, err error) {
 			return
 		}
 
+		var residual_colour_transform_flag uint
 		if chroma_format_idc == 3 {
 			// residual_colour_transform_flag
-			if _, err = r.ReadBit(); err != nil {
+			if residual_colour_transform_flag, err = r.ReadBit(); err != nil {
 				return
 			}
 		}
 
+		if false {
+			fmt.Printf("chroma_format_idc %d residual_colour_transform_flag: %d\n",
+				chroma_format_idc, residual_colour_transform_flag)
+		}
 		// bit_depth_luma_minus8
 		if _, err = r.ReadExponentialGolombCode(); err != nil {
 			return
@@ -400,13 +497,16 @@ func ParseSPS(data []byte) (self SPSInfo, err error) {
 	}
 
 	// log2_max_frame_num_minus4
-	if _, err = r.ReadExponentialGolombCode(); err != nil {
+	if self.Log2MaxFrameNumMinus4, err = r.ReadExponentialGolombCode(); err != nil {
 		return
 	}
 
 	var pic_order_cnt_type uint
 	if pic_order_cnt_type, err = r.ReadExponentialGolombCode(); err != nil {
 		return
+	}
+	if Debug {
+		fmt.Printf("pic_order_cnt_type %d\n", pic_order_cnt_type)
 	}
 	if pic_order_cnt_type == 0 {
 		// log2_max_pic_order_cnt_lsb_minus4
@@ -438,8 +538,12 @@ func ParseSPS(data []byte) (self SPSInfo, err error) {
 	}
 
 	// max_num_ref_frames
-	if _, err = r.ReadExponentialGolombCode(); err != nil {
+	var max_num_ref_frames uint
+	if max_num_ref_frames, err = r.ReadExponentialGolombCode(); err != nil {
 		return
+	}
+	if Debug {
+		fmt.Printf("max_num_ref_frames: %d ", max_num_ref_frames)
 	}
 
 	// gaps_in_frame_num_value_allowed_flag
@@ -457,11 +561,14 @@ func ParseSPS(data []byte) (self SPSInfo, err error) {
 	}
 	self.MbHeight++
 
-	var frame_mbs_only_flag uint
-	if frame_mbs_only_flag, err = r.ReadBit(); err != nil {
+	// var frame_mbs_only_flag uint
+	if self.FrameMbsOnlyFlag, err = r.ReadBit(); err != nil {
 		return
 	}
-	if frame_mbs_only_flag == 0 {
+	if Debug {
+		fmt.Printf(" frame_mbs_only_flag: %d ", self.FrameMbsOnlyFlag)
+	}
+	if self.FrameMbsOnlyFlag == 0 {
 		// mb_adaptive_frame_field_flag
 		if _, err = r.ReadBit(); err != nil {
 			return
@@ -477,6 +584,9 @@ func ParseSPS(data []byte) (self SPSInfo, err error) {
 	if frame_cropping_flag, err = r.ReadBit(); err != nil {
 		return
 	}
+	if Debug {
+		fmt.Printf("frame_cropping_flag %d ", frame_cropping_flag)
+	}
 	if frame_cropping_flag != 0 {
 		if self.CropLeft, err = r.ReadExponentialGolombCode(); err != nil {
 			return
@@ -490,22 +600,295 @@ func ParseSPS(data []byte) (self SPSInfo, err error) {
 		if self.CropBottom, err = r.ReadExponentialGolombCode(); err != nil {
 			return
 		}
+		if Debug {
+			fmt.Printf("left %d right %d top %d bottom %d", self.CropLeft, self.CropRight, self.CropTop, self.CropBottom)
+		}
+	}
+	if Debug {
+		fmt.Printf("\n")
 	}
 
 	self.Width = (self.MbWidth * 16) - self.CropLeft*2 - self.CropRight*2
-	self.Height = ((2 - frame_mbs_only_flag) * self.MbHeight * 16) - self.CropTop*2 - self.CropBottom*2
+	self.Height = ((2 - self.FrameMbsOnlyFlag) * self.MbHeight * 16) - self.CropTop*2 - self.CropBottom*2
+
+	var vui_parameters_present_flag uint
+	if vui_parameters_present_flag, err = r.ReadBit(); err != nil {
+		return
+	}
+	if vui_parameters_present_flag != 0 {
+		if err = decodeVuiParameters(r, &self); err != nil {
+			return
+		}
+	}
 
 	return
 }
 
+const EXTENDED_SAR = 255
+
+func decodeVuiParameters(r *bits.GolombBitReader, sps *SPSInfo) error {
+	var aspect_ratio_info_present_flag uint
+	var aspect_ratio_idc uint
+	var err error
+
+	if aspect_ratio_info_present_flag, err = r.ReadBit(); err != nil {
+		return err
+	}
+
+	if aspect_ratio_info_present_flag != 0 {
+		if aspect_ratio_idc, err = r.ReadBits(8); err != nil {
+			return err
+		}
+		if Debug {
+			fmt.Printf("Aspect ratio idc %d \n", aspect_ratio_idc)
+		}
+		if aspect_ratio_idc == EXTENDED_SAR {
+			if _, err = r.ReadBits(16); err != nil {
+				return err
+			}
+			if _, err = r.ReadBits(16); err != nil {
+				return err
+			}
+		} else if aspect_ratio_idc < 17 {
+			// aspect_ratio_idc is index to the table
+		} else {
+			fmt.Printf("illegal aspect ratio %d\n", aspect_ratio_idc)
+		}
+	}
+
+	var overscan_info_present_flag uint
+	if overscan_info_present_flag, err = r.ReadBit(); err != nil {
+		return err
+	}
+	if overscan_info_present_flag != 0 {
+		if _, err = r.ReadBit(); err != nil {
+			return err
+		}
+	}
+
+	var video_signal_type_present_flag uint
+	if video_signal_type_present_flag, err = r.ReadBit(); err != nil {
+		return err
+	}
+	if video_signal_type_present_flag != 0 {
+		if _, err = r.ReadBits(3); err != nil {
+			return err
+		}
+		/* video_full_range_flag */
+		if _, err = r.ReadBit(); err != nil {
+			return err
+		}
+
+		var colour_description_present_flag uint
+		if colour_description_present_flag, err = r.ReadBit(); err != nil {
+			return err
+		}
+		if colour_description_present_flag != 0 {
+			/* colour_primaries */
+			if _, err = r.ReadBits(8); err != nil {
+				return err
+			}
+			/* transfer_characteristics */
+			if _, err = r.ReadBits(8); err != nil {
+				return err
+			}
+			/* matrix_coefficients */
+			if _, err = r.ReadBits(8); err != nil {
+				return err
+			}
+		}
+	}
+
+	var chroma_location_info_present_flag uint
+	if chroma_location_info_present_flag, err = r.ReadBit(); err != nil {
+		return err
+	}
+	if Debug {
+		fmt.Printf("overscan_info_present_flag %d video_signal_type_present_flag %d chroma_location_info_present_flag %d\n",
+			overscan_info_present_flag, video_signal_type_present_flag, chroma_location_info_present_flag)
+	}
+	if chroma_location_info_present_flag != 0 {
+		/* chroma_sample_location_type_top_field */
+		var chroma_location uint
+		if chroma_location, err = r.ReadExponentialGolombCode(); err != nil {
+			return err
+		}
+		/* chroma_sample_location_type_bottom_field */
+		var chroma_sample_location_type_bottom_field uint
+		if chroma_sample_location_type_bottom_field, err = r.ReadExponentialGolombCode(); err != nil {
+			return err
+		}
+		if Debug {
+			fmt.Printf("chroma_location %d chroma_sample_location_type_bottom_field %d\n", chroma_location, chroma_sample_location_type_bottom_field)
+		}
+	}
+
+	var timing_info_present_flag uint
+	if timing_info_present_flag, err = r.ReadBit(); err != nil {
+		return nil
+	}
+
+	if timing_info_present_flag != 0 {
+		if sps.NumUnitsInTick, err = r.ReadBits(32); err != nil {
+			// fmt.Printf("Truncated VUI\n")
+			return nil
+		}
+		if sps.TimeScale, err = r.ReadBits(32); err != nil {
+			// fmt.Printf("Truncated VUI\n")
+			return nil
+		}
+		if sps.NumUnitsInTick == 0 || sps.TimeScale == 0 {
+			if Debug {
+				fmt.Printf("time_scale/num_units_in_tick invalid or unsupported (%d/%d)\n", sps.TimeScale, sps.NumUnitsInTick)
+			}
+		} else {
+			if Debug {
+				fmt.Printf("Frame rate: time scale %d num units in tick %d (%f)\n", sps.TimeScale, sps.NumUnitsInTick,
+					float64(sps.TimeScale)/float64(sps.NumUnitsInTick*2))
+			}
+			sps.FPS = float64(sps.TimeScale) / float64(sps.NumUnitsInTick*2)
+		}
+		if sps.FixedFrameRateFlag, err = r.ReadBit(); err != nil {
+			return nil
+		}
+	}
+	var nal_hrd_parameters_present_flag uint
+	if nal_hrd_parameters_present_flag, err = r.ReadBit(); err != nil {
+		// fmt.Printf("Truncated VUI\n")
+		return nil
+	}
+	if nal_hrd_parameters_present_flag != 0 {
+		decodeHrdParameters(r, sps)
+
+	}
+	var vcl_hrd_parameters_present_flag uint
+	if vcl_hrd_parameters_present_flag, err = r.ReadBit(); err != nil {
+		return nil
+	}
+	if vcl_hrd_parameters_present_flag != 0 {
+		decodeHrdParameters(r, sps)
+	}
+
+	if nal_hrd_parameters_present_flag != 0 || vcl_hrd_parameters_present_flag != 0 {
+		// low_delay_hrd_flag
+		if _, err = r.ReadBit(); err != nil {
+			return nil
+		}
+	}
+	var pic_struct_present_flag uint
+	if pic_struct_present_flag, err = r.ReadBit(); err != nil {
+		return nil
+	}
+	if false {
+		fmt.Printf("pic_struct_present_flag: %d\n", pic_struct_present_flag)
+	}
+	var bitstream_restriction_flag uint
+	if bitstream_restriction_flag, err = r.ReadBit(); err != nil {
+		return nil
+	}
+	if bitstream_restriction_flag != 0 {
+
+		// motion_vectors_over_pic_boundaries_flag
+		if _, err = r.ReadBit(); err != nil {
+			return nil
+		}
+		// max_bytes_per_pic_denom
+		if _, err = r.ReadExponentialGolombCode(); err != nil {
+			return err
+		}
+		// max_bits_per_mb_denom
+		if _, err = r.ReadExponentialGolombCode(); err != nil {
+			return err
+		}
+		// log2_max_mv_length_horizontal
+		if _, err = r.ReadExponentialGolombCode(); err != nil {
+			return err
+		}
+		// log2_max_mv_length_vertical
+		if _, err = r.ReadExponentialGolombCode(); err != nil {
+			return err
+		}
+		var num_reorder_frames uint
+		if num_reorder_frames, err = r.ReadExponentialGolombCode(); err != nil {
+			return err
+		}
+		// max_dec_frame_buffering
+		if _, err = r.ReadExponentialGolombCode(); err != nil {
+			return err
+		}
+
+		if num_reorder_frames > 16 {
+			num_reorder_frames = 16
+		}
+	}
+	return nil
+}
+
+func decodeHrdParameters(r *bits.GolombBitReader, sps *SPSInfo) error {
+	var cpb_count, i uint
+	var err error
+	if cpb_count, err = r.ReadExponentialGolombCode(); err != nil {
+		return err
+	}
+	cpb_count += 1
+
+	if cpb_count > 32 {
+		fmt.Printf("cpb_count %d invalid\n", cpb_count)
+		return fmt.Errorf("cpb_count %d invalid", cpb_count)
+	}
+
+	if _, err = r.ReadBits(4); err != nil { /* bit_rate_scale */
+		return err
+	}
+	if _, err = r.ReadBits(4); err != nil { /* cpb_size_scale */
+		return err
+	}
+	for i = 0; i < cpb_count; i++ {
+		/* bit_rate_value_minus1 */
+		if _, err = r.ReadExponentialGolombCode(); err != nil {
+			return err
+		}
+		/* cpb_size_value_minus1 */
+		if _, err = r.ReadExponentialGolombCode(); err != nil {
+			return err
+		}
+		/* cbr_flag */
+		if _, err = r.ReadBit(); err != nil {
+			return err
+		}
+	}
+	// initial_cpb_removal_delay_length = get_bits(gb, 5) + 1;
+	if _, err = r.ReadBits(5); err != nil {
+		return err
+	}
+	// cpb_removal_delay_length         = get_bits(gb, 5) + 1;
+	if _, err = r.ReadBits(5); err != nil {
+		return err
+	}
+	// dpb_output_delay_length          = get_bits(gb, 5) + 1;
+	if _, err = r.ReadBits(5); err != nil {
+		return err
+	}
+	// time_offset_length               = get_bits(gb, 5);
+	if _, err = r.ReadBits(5); err != nil {
+		return err
+	}
+	return nil
+}
+
 type CodecData struct {
-	Record []byte
+	Record     []byte
 	RecordInfo AVCDecoderConfRecord
-	SPSInfo SPSInfo
+	SPSInfo    SPSInfo
+	TimeScale_ uint32
 }
 
 func (self CodecData) Type() av.CodecType {
 	return av.H264
+}
+
+func (self CodecData) TimeScale() uint32 {
+	return self.TimeScale_
 }
 
 func (self CodecData) AVCDecoderConfRecordBytes() []byte {
@@ -589,8 +972,8 @@ func (self *AVCDecoderConfRecord) Unmarshal(b []byte) (n int, err error) {
 	self.AVCProfileIndication = b[1]
 	self.ProfileCompatibility = b[2]
 	self.AVCLevelIndication = b[3]
-	self.LengthSizeMinusOne = b[4]&0x03
-	spscount := int(b[5]&0x1f)
+	self.LengthSizeMinusOne = b[4] & 0x03
+	spscount := int(b[5] & 0x1f)
 	n += 6
 
 	for i := 0; i < spscount; i++ {
@@ -638,10 +1021,10 @@ func (self *AVCDecoderConfRecord) Unmarshal(b []byte) (n int, err error) {
 func (self AVCDecoderConfRecord) Len() (n int) {
 	n = 7
 	for _, sps := range self.SPS {
-		n += 2+len(sps)
+		n += 2 + len(sps)
 	}
 	for _, pps := range self.PPS {
-		n += 2+len(pps)
+		n += 2 + len(pps)
 	}
 	return
 }
@@ -651,8 +1034,8 @@ func (self AVCDecoderConfRecord) Marshal(b []byte) (n int) {
 	b[1] = self.AVCProfileIndication
 	b[2] = self.ProfileCompatibility
 	b[3] = self.AVCLevelIndication
-	b[4] = self.LengthSizeMinusOne|0xfc
-	b[5] = uint8(len(self.SPS))|0xe0
+	b[4] = self.LengthSizeMinusOne | 0xfc
+	b[5] = uint8(len(self.SPS)) | 0xe0
 	n += 6
 
 	for _, sps := range self.SPS {
@@ -690,7 +1073,7 @@ func (self SliceType) String() string {
 }
 
 const (
-	SLICE_P = iota+1
+	SLICE_P = iota + 1
 	SLICE_B
 	SLICE_I
 )
@@ -702,9 +1085,9 @@ func ParseSliceHeaderFromNALU(packet []byte) (sliceType SliceType, err error) {
 		return
 	}
 
-	nal_unit_type := packet[0]&0x1f
+	nal_unit_type := packet[0] & 0x1f
 	switch nal_unit_type {
-	case 1,2,5,19:
+	case 1, 2, 5, 19:
 		// slice_layer_without_partitioning_rbsp
 		// slice_data_partition_a_layer_rbsp
 
@@ -727,11 +1110,11 @@ func ParseSliceHeaderFromNALU(packet []byte) (sliceType SliceType, err error) {
 	}
 
 	switch u {
-	case 0,3,5,8:
+	case 0, 3, 5, 8:
 		sliceType = SLICE_P
-	case 1,6:
+	case 1, 6:
 		sliceType = SLICE_B
-	case 2,4,7,9:
+	case 2, 4, 7, 9:
 		sliceType = SLICE_I
 	default:
 		err = fmt.Errorf("h264parser: slice_type=%d invalid", u)
@@ -740,4 +1123,3 @@ func ParseSliceHeaderFromNALU(packet []byte) (sliceType SliceType, err error) {
 
 	return
 }
-
